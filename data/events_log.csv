@@ -1,0 +1,7 @@
+date,month,region,bu,product_line,type,summary
+2025-08-06,2025-08,APAC,,Gamma,supplier_issue,Critical component shortage for Gamma; supplier delays increased lead times and backorders.
+2025-09-04,2025-09,APAC,,Gamma,supply_recovery,Supplier partial recovery; constraints easing but not fully resolved.
+2025-03-11,2025-03,EMEA,Growth,Beta,promo,"Aggressive discount campaign on Beta drove bookings up, ASP down, and margin compression."
+2024-10-15,2024-10,NA,Services,ServicesPlus,customer_loss,Two enterprise customers paused renewals for ServicesPlus; churn increased and bookings fell.
+2025-11-03,2025-11,EMEA,,,fx,EUR strengthened versus USD; reported USD revenue increased versus local-currency performance.
+2025-05-22,2025-05,,,,close_adjustment,Late allocations and cloud spend true-up impacted opex for select regions and cost centers.
