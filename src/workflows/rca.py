@@ -18,6 +18,7 @@ from src.agents.shipments import ShipmentsAgent
 from src.agents.events import EventsAgent
 from src.memory.run_store import RunRecord, run_store
 from src.tools.data_loader import DataRepository
+from src.tools.normalize import ensure_serializable
 
 @dataclass
 class RCAJob:
@@ -73,13 +74,14 @@ async def _simulate_rca_run(job: RCAJob, run_id: str) -> None:
             product_line=job.product_line,
             segment=job.segment,
         )
+        finance_serialized = ensure_serializable(finance_res)
         run_store.upsert(
             RunRecord(
                 run_id=run_id,
                 status="finance_completed",
                 message="Finance analysis completed.",
                 payload=job.__dict__,
-                result={"finance": finance_res},
+                result={"finance": finance_serialized},
             )
         )
 
@@ -116,6 +118,12 @@ async def _simulate_rca_run(job: RCAJob, run_id: str) -> None:
             segment=job.segment,
         )
 
+        demand_serialized = ensure_serializable(demand_res)
+        supply_serialized = ensure_serializable(supply_res)
+        shipments_serialized = ensure_serializable(shipments_res)
+        fx_serialized = ensure_serializable(fx_res)
+        events_serialized = ensure_serializable(events_res)
+
         run_store.upsert(
             RunRecord(
                 run_id=run_id,
@@ -123,17 +131,18 @@ async def _simulate_rca_run(job: RCAJob, run_id: str) -> None:
                 message="Aggregating findings.",
                 payload=job.__dict__,
                 result={
-                    "finance": finance_res,
-                    "demand": demand_res,
-                    "supply": supply_res,
-                    "shipments": shipments_res,
-                    "fx": fx_res,
-                    "events": events_res,
+                    "finance": finance_serialized,
+                    "demand": demand_serialized,
+                    "supply": supply_serialized,
+                    "shipments": shipments_serialized,
+                    "fx": fx_serialized,
+                    "events": events_serialized,
                 },
             )
         )
 
-        synthesis = synthesis_agent.synthesize(finance_res, demand_res, supply_res, shipments_res, fx_res, events_res)
+        synthesis = synthesis_agent.synthesize(finance_serialized, demand_serialized, supply_serialized, shipments_serialized, fx_serialized, events_serialized)
+        synthesis_serialized = ensure_serializable(synthesis)
 
         run_store.upsert(
             RunRecord(
@@ -142,13 +151,13 @@ async def _simulate_rca_run(job: RCAJob, run_id: str) -> None:
                 message="RCA workflow completed.",
                 payload=job.__dict__,
                 result={
-                    "finance": finance_res,
-                    "demand": demand_res,
-                    "supply": supply_res,
-                    "shipments": shipments_res,
-                    "fx": fx_res,
-                    "events": events_res,
-                    "synthesis": synthesis,
+                    "finance": finance_serialized,
+                    "demand": demand_serialized,
+                    "supply": supply_serialized,
+                    "shipments": shipments_serialized,
+                    "fx": fx_serialized,
+                    "events": events_serialized,
+                    "synthesis": synthesis_serialized,
                 },
             )
         )

@@ -229,3 +229,16 @@ Current layout with intended roles:
 ```bash
 pytest
 ```
+
+### React Frontend
+Located in `frontend/` (Vite + React + TypeScript).
+1. Install deps (from `frontend/`):
+   ```bash
+   npm install
+   ```
+2. Run dev server:
+   ```bash
+   npm run dev
+   ```
+3. Open the URL printed by Vite (default http://localhost:5173) and trigger RCA runs.
+4. To point at a different API base URL, set `VITE_API_BASE_URL` in `frontend/.env` (defaults to `http://127.0.0.1:8000`).

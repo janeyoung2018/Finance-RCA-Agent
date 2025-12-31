@@ -1,6 +1,7 @@
 from typing import Optional
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.workflows.rca import RCAJob, enqueue_rca, get_rca_status
@@ -26,6 +27,15 @@ def create_app() -> FastAPI:
         title="Finance RCA Agent",
         description="Production-oriented multi-agent system for financial root cause analysis.",
         version="0.1.0",
+    )
+
+    # Allow local frontend/dev origins; adjust in production.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.get("/health")

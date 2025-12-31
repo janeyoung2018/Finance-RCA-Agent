@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Dict, Optional
 
+from fastapi.encoders import jsonable_encoder
+
 
 @dataclass
 class RunRecord:
@@ -26,10 +28,12 @@ class RunStore:
     def upsert(self, record: RunRecord) -> None:
         with self._lock:
             existing = self._runs.get(record.run_id)
+            payload = jsonable_encoder(record.payload) if record.payload is not None else {}
+            result = jsonable_encoder(record.result) if record.result is not None else None
             if existing:
                 # merge updates while keeping last known payload/result
-                payload = record.payload or existing.payload
-                result = record.result if record.result is not None else existing.result
+                payload = payload or existing.payload
+                result = result if result is not None else existing.result
                 self._runs[record.run_id] = RunRecord(
                     run_id=record.run_id,
                     status=record.status,
@@ -38,7 +42,13 @@ class RunStore:
                     result=result,
                 )
             else:
-                self._runs[record.run_id] = record
+                self._runs[record.run_id] = RunRecord(
+                    run_id=record.run_id,
+                    status=record.status,
+                    message=record.message,
+                    payload=payload,
+                    result=result,
+                )
 
     def get(self, run_id: str) -> Optional[RunRecord]:
         with self._lock:
