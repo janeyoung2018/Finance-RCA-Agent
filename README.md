@@ -179,3 +179,53 @@ The system is instrumented for:
 - HITL escalation and rejection rates
 
 Observability is treated as **part of correctness**, not an afterthought.
+
+---
+
+## Repository Structure (scaffold)
+
+Current layout with intended roles:
+- `src/agents` — orchestrator, specialist agents, and synthesis/challenge loops.
+- `src/tools` — analytical tools (variance decomposition, anomaly detection, charting, CSV/SQL loaders).
+- `src/memory` — session + long-term stores, compaction utilities, and retrieval logic.
+- `src/workflows` — LangGraph/LangChain graphs and orchestration definitions.
+- `src/schemas` — Pydantic contracts for state, tool IO, and HITL payloads.
+- `api/` — FastAPI or CLI entrypoints, routing, auth hooks.
+- `config/` — environment settings, data paths, and routing config (add `.env.example` here).
+- `observability/` — logging, tracing, metrics config.
+- `docs/` — architecture notes, runbooks, HITL/observability guides.
+- `tests/` — unit/integration/e2e tests and planted-scenario evaluations.
+- `scripts/` — setup, lint/test runners, data/evaluation helpers.
+- `data/` — synthetic dataset, dictionary, and examples (see `data_readme.md` and `datadict.md`).
+
+---
+
+## Getting Started (FastAPI)
+
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Run the API locally:
+   ```bash
+   uvicorn api.main:app --reload
+   ```
+3. Check health:
+   ```bash
+   curl http://127.0.0.1:8000/health
+   ```
+4. Start an RCA:
+   ```bash
+   curl -X POST http://127.0.0.1:8000/rca \\
+     -H "Content-Type: application/json" \\
+     -d '{"month":"2025-08","region":"APAC","bu":"Growth"}'
+   ```
+5. Poll run status and results:
+   ```bash
+   curl http://127.0.0.1:8000/rca/rca-202508
+   ```
+
+### Tests
+```bash
+pytest
+```
