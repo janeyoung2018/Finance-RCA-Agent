@@ -166,6 +166,7 @@ function App() {
           <p className="message">{currentRun.message}</p>
           {currentRun.result && (
             <>
+              {renderDecisionSummaries(currentRun.result as any)}
               {renderRollup((currentRun.result as any).rollup as Rollup | undefined)}
               {renderDomains((currentRun.result as any).domains as Domains | undefined)}
             </>
@@ -265,6 +266,42 @@ function renderDomains(domains?: Domains) {
           {Object.entries(bus as NonNullable<typeof bus>).map(([name, entry]) => (
             <DomainCard key={name} name={name} entry={entry} />
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function renderDecisionSummaries(result: any) {
+  const scopeSynthesis = result?.synthesis as any;
+  const portfolio = result?.portfolio as any;
+
+  const scopeRule = scopeSynthesis?.rule_summary ?? scopeSynthesis?.summary;
+  const scopeDecision = scopeSynthesis?.llm_decision_summary;
+  const portfolioRule = portfolio?.rule_portfolio_brief ?? portfolio?.portfolio_brief;
+  const portfolioDecision = portfolio?.llm_decision_summary;
+
+  // Only show decision-support section when an LLM decision summary exists.
+  if (!scopeDecision && !portfolioDecision) return null;
+
+  return (
+    <div className="domains">
+      <h3>Decision Support Summaries</h3>
+      {scopeDecision && (
+        <div className="domain-card">
+          <div className="domain-header">
+            <strong>Scope</strong>
+          </div>
+          <p className="brief"><strong>LLM:</strong> {scopeDecision}</p>
+          {scopeRule && <p className="brief">{scopeRule}</p>}
+        </div>
+      )}
+      {portfolioDecision && (
+        <div className="domain-card">
+          <div className="domain-header">
+            <strong>Portfolio Sweep</strong>
+          </div>
+          <p className="brief"><strong>LLM:</strong> {portfolioDecision}</p>
         </div>
       )}
     </div>

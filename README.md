@@ -241,6 +241,11 @@ Current layout with intended roles:
 pytest
 ```
 
+### LLM Decision-Support (optional)
+- Prefer Gemini free tier: set `GOOGLE_API_KEY` (default model `gemini-1.5-flash`).  
+- Alternatively, set `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL`) to use OpenAI chat models.
+- Optional envs: `LLM_MODEL`, `LLM_MAX_TOKENS` (default `256`), `LLM_TEMPERATURE` (default `0.2`).
+
 ### React Frontend
 Located in `frontend/` (Vite + React + TypeScript).
 1. Install deps (from `frontend/`):

@@ -17,6 +17,8 @@ from src.agents.finance import FinanceVarianceAgent
 from src.agents.fx import FXAgent
 from src.agents.supply import SupplyAgent
 from src.agents.synthesis import SynthesisAgent
+from src.llm.client import build_llm
+import logging
 from src.agents.shipments import ShipmentsAgent
 from src.agents.events import EventsAgent
 from src.config import TOP_CONTRIBUTORS
@@ -117,6 +119,11 @@ def _is_unscoped(job: RCAJob) -> bool:
 
 
 def _init_agents() -> Dict[str, object]:
+    llm = build_llm()
+    if llm:
+        logging.getLogger(__name__).info("LLM client initialized for synthesis.")
+    else:
+        logging.getLogger(__name__).info("LLM client not initialized; synthesis will use rule-based fallbacks.")
     return {
         "finance": FinanceVarianceAgent(),
         "demand": DemandAgent(),
@@ -124,7 +131,8 @@ def _init_agents() -> Dict[str, object]:
         "shipments": ShipmentsAgent(),
         "fx": FXAgent(),
         "events": EventsAgent(),
-        "synthesis": SynthesisAgent(),
+        # Remains rule-based when llm is None; becomes LLM-enhanced when configured via env vars.
+        "synthesis": SynthesisAgent(llm=llm),
     }
 
 

@@ -42,6 +42,7 @@ export interface DomainEntry {
   summary?: string;
   brief_report?: string;
   domains?: { domain: string; occurrences: number }[];
+  llm_decision_summary?: string;
 }
 
 export interface Domains {

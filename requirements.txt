@@ -3,3 +3,6 @@ uvicorn>=0.24
 pydantic>=2.6
 pandas>=2.1
 pytest>=7.4
+openai>=1.14
+google-genai>=1.0.0
+python-dotenv>=1.0
