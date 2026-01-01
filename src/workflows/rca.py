@@ -6,8 +6,11 @@ creates a run record, then updates status over time in the background.
 """
 
 import asyncio
+from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+
+import pandas as pd
 
 from src.agents.demand import DemandAgent
 from src.agents.finance import FinanceVarianceAgent
@@ -16,6 +19,7 @@ from src.agents.supply import SupplyAgent
 from src.agents.synthesis import SynthesisAgent
 from src.agents.shipments import ShipmentsAgent
 from src.agents.events import EventsAgent
+from src.config import TOP_CONTRIBUTORS
 from src.memory.run_store import RunRecord, run_store
 from src.tools.data_loader import DataRepository
 from src.tools.variance import filter_by_scope
@@ -29,7 +33,7 @@ class RCAJob:
     product_line: Optional[str] = None
     segment: Optional[str] = None
     metric: Optional[str] = None
-    comparison: str = "plan"
+    comparison: str = "all"
     full_sweep: bool = False
 
 
@@ -207,6 +211,8 @@ async def _run_single_scope(job: RCAJob, run_id: str, repo: DataRepository, agen
         scope_label=scope_label,
     )
     synthesis_serialized = ensure_serializable(synthesis)
+    finance_rollup = _build_finance_rollup(filter_by_scope(repo.finance(), job.month, **{k: v for k, v in filters.items() if k != "metric"}))
+    finance_rollup_serialized = ensure_serializable(finance_rollup)
 
     result = {
         "finance": finance_serialized,
@@ -218,6 +224,7 @@ async def _run_single_scope(job: RCAJob, run_id: str, repo: DataRepository, agen
         "synthesis": synthesis_serialized,
         "filters": filters,
         "scope": scope_label,
+        "rollup": finance_rollup_serialized,
     }
 
     run_store.upsert(
@@ -259,13 +266,21 @@ async def _run_full_sweep(job: RCAJob, run_id: str, repo: DataRepository, agents
         )
 
     sweep_summary = agents["synthesis"].summarize_sweep(sweep_results)
+    finance_df_for_rollup = filter_by_scope(repo.finance(), job.month, region=job.region, bu=job.bu, product_line=job.product_line, segment=job.segment)
+    rollup = _build_finance_rollup(finance_df_for_rollup)
+    domain_breakdown = _build_domain_breakdown(sweep_results)
     run_store.upsert(
         RunRecord(
             run_id=run_id,
             status="completed",
             message="Full-sweep RCA workflow completed.",
             payload=job.__dict__,
-            result={"scopes": ensure_serializable(sweep_results), "portfolio": ensure_serializable(sweep_summary)},
+            result={
+                "scopes": ensure_serializable(sweep_results),
+                "portfolio": ensure_serializable(sweep_summary),
+                "rollup": ensure_serializable(rollup),
+                "domains": ensure_serializable(domain_breakdown),
+            },
         )
     )
 
@@ -305,3 +320,123 @@ def _unique_non_null(df, column: str) -> List[str]:
         .tolist()
     )
     return [str(v) for v in values if str(v).strip() != ""]
+
+
+def _metric_summary(df) -> Dict[str, Dict]:
+    if df.empty or "metric" not in df.columns:
+        return {}
+    summaries: Dict[str, Dict] = {}
+    for metric in _unique_non_null(df, "metric"):
+        slice_df = df[df["metric"] == metric]
+        actual = slice_df["actual"].sum() if "actual" in slice_df else 0
+        plan = slice_df["plan"].sum() if "plan" in slice_df else None
+        prior = slice_df["prior"].sum() if "prior" in slice_df else None
+        plan = None if plan is None or pd.isna(plan) else plan
+        prior = None if prior is None or pd.isna(prior) else prior
+        summaries[metric] = {
+            "actual": actual,
+            "plan": plan,
+            "prior": prior,
+            "variance_to_plan": actual - plan if plan is not None else None,
+            "variance_to_prior": actual - prior if prior is not None else None,
+        }
+    return summaries
+
+
+def _top_variance_by_dim(df, dim: str, limit: int = TOP_CONTRIBUTORS) -> List[Dict]:
+    if df.empty or dim not in df.columns:
+        return []
+    grouped = (
+        df.groupby(dim)
+        .agg(
+            actual=("actual", "sum"),
+            plan=("plan", "sum"),
+            prior=("prior", "sum"),
+        )
+        .reset_index()
+    )
+    if grouped.empty:
+        return []
+    grouped = grouped.fillna(0)
+    grouped["variance_to_plan"] = grouped["actual"] - grouped["plan"]
+    grouped["variance_to_prior"] = grouped["actual"] - grouped["prior"]
+    grouped["abs_var_plan"] = grouped["variance_to_plan"].abs()
+    ordered = grouped.sort_values("abs_var_plan", ascending=False).head(limit)
+    return ordered[[dim, "actual", "plan", "prior", "variance_to_plan", "variance_to_prior"]].to_dict(orient="records")
+
+
+def _top_variance_by_dim_per_metric(df, dim: str, limit: int = TOP_CONTRIBUTORS) -> Dict[str, List[Dict]]:
+    if df.empty or dim not in df.columns or "metric" not in df.columns:
+        return {}
+    results: Dict[str, List[Dict]] = {}
+    for metric in _unique_non_null(df, "metric"):
+        metric_df = df[df["metric"] == metric]
+        results[metric] = _top_variance_by_dim(metric_df, dim, limit=limit)
+    return results
+
+
+def _build_finance_rollup(finance_df) -> Dict:
+    """
+    Build overall + region/BU rollups for finance metrics vs plan and prior (year-ago).
+    """
+    metrics = _metric_summary(finance_df)
+    top_regions_by_metric = _top_variance_by_dim_per_metric(finance_df, "region")
+    top_bus_by_metric = _top_variance_by_dim_per_metric(finance_df, "bu")
+
+    per_region = {}
+    for region in _unique_non_null(finance_df, "region"):
+        region_df = finance_df[finance_df["region"] == region]
+        per_region[region] = {
+            "metrics": _metric_summary(region_df),
+            "top_bus_by_metric": _top_variance_by_dim_per_metric(region_df, "bu"),
+        }
+
+    per_bu = {}
+    for bu in _unique_non_null(finance_df, "bu"):
+        bu_df = finance_df[finance_df["bu"] == bu]
+        per_bu[bu] = {
+            "metrics": _metric_summary(bu_df),
+            "top_regions_by_metric": _top_variance_by_dim_per_metric(bu_df, "region"),
+        }
+
+    return {
+        "overall": {
+            "metrics": metrics,
+            "top_regions_by_metric": top_regions_by_metric,
+            "top_bus_by_metric": top_bus_by_metric,
+        },
+        "regions": per_region,
+        "bus": per_bu,
+    }
+
+
+def _build_domain_breakdown(sweep_results: Dict[str, Dict]) -> Dict:
+    """
+    Summarize dominant agent domains per region and BU based on sweep syntheses.
+    """
+    regions: Dict[str, Dict] = {}
+    bus: Dict[str, Dict] = {}
+
+    for label, payload in sweep_results.items():
+        filters = payload.get("filters") or {}
+        synthesis = payload.get("synthesis") or {}
+        findings = synthesis.get("findings") or []
+        counts = Counter(f.get("domain") for f in findings if f.get("domain"))
+        domains = [{"domain": d, "occurrences": c} for d, c in counts.most_common()]
+        summary_entry = {
+            "summary": synthesis.get("summary"),
+            "brief_report": synthesis.get("brief_report"),
+            "domains": domains,
+        }
+
+        if label.startswith("region:") or filters.get("region"):
+            region = label.split(":", 1)[1] if label.startswith("region:") else filters.get("region")
+            if region:
+                regions[region] = summary_entry
+
+        if label.startswith("bu:") or filters.get("bu"):
+            bu_value = label.split(":", 1)[1] if label.startswith("bu:") else filters.get("bu")
+            if bu_value:
+                bus[bu_value] = summary_entry
+
+    return {"regions": regions, "bus": bus}

@@ -27,7 +27,8 @@ export const OPTION_VALUES = {
   ],
   "comparisons": [
     "plan",
-    "prior"
+    "prior",
+    "all"
   ]
 } as const;
 

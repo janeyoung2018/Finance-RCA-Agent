@@ -13,7 +13,7 @@ class RCARequest(BaseModel):
     product_line: Optional[str] = None
     segment: Optional[str] = None
     metric: Optional[str] = None
-    comparison: str = "plan"  # plan | prior
+    comparison: str = "all"  # plan | prior | all
     full_sweep: bool = False
 
 

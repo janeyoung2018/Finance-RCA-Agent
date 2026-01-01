@@ -128,3 +128,71 @@ summary {
   cursor: pointer;
   font-weight: 600;
 }
+
+.rollup, .domains {
+  margin-top: 16px;
+}
+
+.rollup-section, .domain-section {
+  margin-top: 12px;
+}
+
+.rollup-subsection, .domain-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  margin: 8px 0;
+  background: #f8fafc;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+
+.table th, .table td {
+  border: 1px solid #e2e8f0;
+  padding: 8px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.table th {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.top-table h5 {
+  margin: 8px 0 4px 0;
+}
+
+.domain-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.chip {
+  display: inline-block;
+  padding: 4px 10px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.chips {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.brief {
+  margin: 4px 0;
+  color: #334155;
+}

@@ -214,7 +214,7 @@ Current layout with intended roles:
    ```bash
    curl http://127.0.0.1:8000/health
    ```
-4. Start an RCA:
+4. Start an RCA (defaults to comparison="all"):
    ```bash
    curl -X POST http://127.0.0.1:8000/rca \\
      -H "Content-Type: application/json" \\
@@ -231,6 +231,10 @@ Current layout with intended roles:
    curl http://127.0.0.1:8000/rca/rca-202508-APAC-Growth
    ```
    Full-sweep requests return run IDs like `rca-202508-all-sweep`.
+   Full-sweep results now include:
+   - `rollup`: month-level finance metrics vs plan and prior with top region/BU contributors
+   - `portfolio`: sweep summary across scopes
+   - `domains`: dominant demand/supply/pricing/fx/cost drivers per region and BU
 
 ### Tests
 ```bash

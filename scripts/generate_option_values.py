@@ -16,7 +16,7 @@ from src.config import PROJECT_ROOT
 from src.tools.data_loader import DataRepository
 
 
-COMPARISONS = ["plan", "prior"]
+COMPARISONS = ["plan", "prior", "all"]
 TARGET_TS = PROJECT_ROOT / "frontend" / "src" / "optionValues.ts"
 
 

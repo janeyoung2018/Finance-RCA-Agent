@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchRca, startRca } from "./api";
 import { OPTION_VALUES } from "./optionValues";
-import type { RCARequest, RCAResponse } from "./types";
+import type { Domains, RCARequest, RCAResponse, Rollup } from "./types";
 
 const DEFAULT_FORM: RCARequest = {
   month: "2025-08",
-  comparison: "plan",
+  comparison: "all",
   full_sweep: false,
 };
 
@@ -165,6 +165,12 @@ function App() {
           </div>
           <p className="message">{currentRun.message}</p>
           {currentRun.result && (
+            <>
+              {renderRollup((currentRun.result as any).rollup as Rollup | undefined)}
+              {renderDomains((currentRun.result as any).domains as Domains | undefined)}
+            </>
+          )}
+          {currentRun.result && (
             <details open>
               <summary>Results</summary>
               <pre>{JSON.stringify(currentRun.result, null, 2)}</pre>
@@ -177,3 +183,180 @@ function App() {
 }
 
 export default App;
+
+function renderRollup(rollup?: Rollup) {
+  if (!rollup) return null;
+  const overall = rollup.overall;
+  const regions = rollup.regions;
+  const bus = rollup.bus;
+  return (
+    <div className="rollup">
+      <h3>Finance Rollup (Actual vs Plan/Prior)</h3>
+      {overall && (
+        <div className="rollup-section">
+          <h4>Overall</h4>
+          {overall.metrics && <MetricTable metrics={overall.metrics} />}
+          {overall.top_regions_by_metric &&
+            Object.entries(overall.top_regions_by_metric).map(([metric, rows]) =>
+              rows.length ? <TopTable key={`reg-${metric}`} title={`Top Regions (${metric})`} rows={rows} /> : null
+            )}
+          {overall.top_bus_by_metric &&
+            Object.entries(overall.top_bus_by_metric).map(([metric, rows]) =>
+              rows.length ? <TopTable key={`bu-${metric}`} title={`Top BUs (${metric})`} rows={rows} /> : null
+            )}
+        </div>
+      )}
+      {regions && Object.keys(regions).length > 0 && (
+        <div className="rollup-section">
+          <h4>By Region</h4>
+          {Object.entries(regions).map(([name, data]) => (
+            <div key={name} className="rollup-subsection">
+              <strong>{name}</strong>
+              {data.metrics && <MetricTable metrics={data.metrics} />}
+              {data.top_bus_by_metric &&
+                Object.entries(data.top_bus_by_metric).map(([metric, rows]) =>
+                  rows.length ? <TopTable key={`${name}-bu-${metric}`} title={`Top BUs (${metric})`} rows={rows} /> : null
+                )}
+            </div>
+          ))}
+        </div>
+      )}
+      {bus && Object.keys(bus).length > 0 && (
+        <div className="rollup-section">
+          <h4>By BU</h4>
+          {Object.entries(bus).map(([name, data]) => (
+            <div key={name} className="rollup-subsection">
+              <strong>{name}</strong>
+              {data.metrics && <MetricTable metrics={data.metrics} />}
+              {data.top_regions_by_metric &&
+                Object.entries(data.top_regions_by_metric).map(([metric, rows]) =>
+                  rows.length ? (
+                    <TopTable key={`${name}-reg-${metric}`} title={`Top Regions (${metric})`} rows={rows} />
+                  ) : null
+                )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function renderDomains(domains?: Domains) {
+  if (!domains) return null;
+  const { regions, bus } = domains;
+  const hasRegions = regions && Object.keys(regions).length > 0;
+  const hasBus = bus && Object.keys(bus).length > 0;
+  if (!hasRegions && !hasBus) return null;
+  return (
+    <div className="domains">
+      <h3>Domain Drivers</h3>
+      {hasRegions && (
+        <div className="domain-section">
+          <h4>By Region</h4>
+          {Object.entries(regions as NonNullable<typeof regions>).map(([name, entry]) => (
+            <DomainCard key={name} name={name} entry={entry} />
+          ))}
+        </div>
+      )}
+      {hasBus && (
+        <div className="domain-section">
+          <h4>By BU</h4>
+          {Object.entries(bus as NonNullable<typeof bus>).map(([name, entry]) => (
+            <DomainCard key={name} name={name} entry={entry} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetricTable({ metrics }: { metrics: Record<string, any> }) {
+  const rows = Object.entries(metrics);
+  if (rows.length === 0) return null;
+  return (
+    <table className="table">
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>Actual</th>
+          <th>Plan</th>
+          <th>Prior</th>
+          <th>Var vs Plan</th>
+          <th>Var vs Prior</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(([metric, values]) => (
+          <tr key={metric}>
+            <td>{metric}</td>
+            <td>{fmt(values.actual)}</td>
+            <td>{fmt(values.plan)}</td>
+            <td>{fmt(values.prior)}</td>
+            <td>{fmt(values.variance_to_plan)}</td>
+            <td>{fmt(values.variance_to_prior)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function TopTable({ title, rows }: { title: string; rows: Record<string, any>[] }) {
+  if (!rows || rows.length === 0) return null;
+  const headers = Object.keys(rows[0]);
+  return (
+    <div className="top-table">
+      <h5>{title}</h5>
+      <table className="table">
+        <thead>
+          <tr>
+            {headers.map((h) => (
+              <th key={h}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={idx}>
+              {headers.map((h) => (
+                <td key={h}>{fmt(row[h])}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DomainCard({ name, entry }: { name: string; entry: any }) {
+  const domains = entry.domains as { domain: string; occurrences: number }[] | undefined;
+  return (
+    <div className="domain-card">
+      <div className="domain-header">
+        <strong>{name}</strong>
+        {entry.summary && <span className="chip">{entry.summary}</span>}
+      </div>
+      {entry.brief_report && <p className="brief">{entry.brief_report}</p>}
+      {domains && domains.length > 0 && (
+        <ul className="chips">
+          {domains.map((d) => (
+            <li key={d.domain} className="chip">
+              {d.domain} ({d.occurrences})
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function fmt(value: any) {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "number") {
+    if (Math.abs(value) >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  return String(value);
+}

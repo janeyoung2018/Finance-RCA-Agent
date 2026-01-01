@@ -8,6 +8,18 @@ from src.tools.variance import finance_variance, filter_by_scope, summarize_top_
 
 class FinanceVarianceAgent:
     def analyze(self, df: pd.DataFrame, month: str, comparison: str = "plan", **filters) -> Dict:
+        if comparison == "all":
+            plan_res = self.analyze(df, month, comparison="plan", **filters)
+            prior_res = self.analyze(df, month, comparison="prior", **filters)
+            summary = f"Plan: {plan_res.get('summary')} | Prior: {prior_res.get('summary')}"
+            return {
+                "summary": summary,
+                "totals": {"plan": plan_res.get("totals"), "prior": prior_res.get("totals")},
+                "top_contributors": plan_res.get("top_contributors"),
+                "top_contributors_prior": prior_res.get("top_contributors"),
+                "comparison": "all",
+            }
+
         scoped = filter_by_scope(df, month, **filters)
         if scoped.empty:
             return {"summary": "No finance data for scope.", "totals": {}, "top_contributors": []}
@@ -27,4 +39,4 @@ class FinanceVarianceAgent:
             summary_parts.append(f"{metric}: {abs(value):,.0f} {direction} {comparison}")
         summary = "; ".join(summary_parts) if summary_parts else "Variance computed."
 
-        return {"summary": summary, "totals": totals, "top_contributors": top}
+        return {"summary": summary, "totals": totals, "top_contributors": top, "comparison": comparison}
