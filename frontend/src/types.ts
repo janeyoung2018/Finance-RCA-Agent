@@ -6,7 +6,9 @@ export interface RCARequest {
   bu?: string;
   product_line?: string;
   segment?: string;
+  metric?: string;
   comparison?: Comparison;
+  full_sweep?: boolean;
 }
 
 export interface RCAResponse {

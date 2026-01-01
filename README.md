@@ -220,10 +220,17 @@ Current layout with intended roles:
      -H "Content-Type: application/json" \\
      -d '{"month":"2025-08","region":"APAC","bu":"Growth"}'
    ```
+   To sweep all regions/BUs/product lines/segments for the month and aggregate results, add `full_sweep:true` (or omit scope filters entirely to default to a sweep):
+   ```bash
+   curl -X POST http://127.0.0.1:8000/rca \\
+     -H "Content-Type: application/json" \\
+     -d '{"month":"2025-08","full_sweep":true}'
+   ```
 5. Poll run status and results:
    ```bash
-   curl http://127.0.0.1:8000/rca/rca-202508
+   curl http://127.0.0.1:8000/rca/rca-202508-APAC-Growth
    ```
+   Full-sweep requests return run IDs like `rca-202508-all-sweep`.
 
 ### Tests
 ```bash
@@ -242,3 +249,7 @@ Located in `frontend/` (Vite + React + TypeScript).
    ```
 3. Open the URL printed by Vite (default http://localhost:5173) and trigger RCA runs.
 4. To point at a different API base URL, set `VITE_API_BASE_URL` in `frontend/.env` (defaults to `http://127.0.0.1:8000`).
+5. Dropdown option values for region/BU/product line/segment/metric/comparison are generated from the data via:
+   ```bash
+   python scripts/generate_option_values.py
+   ```

@@ -1,16 +1,26 @@
 import pandas as pd
 
 
-def filter_by_scope(df: pd.DataFrame, month: str, region=None, bu=None, product_line=None, segment=None) -> pd.DataFrame:
+def filter_by_scope(
+    df: pd.DataFrame,
+    month: str,
+    region=None,
+    bu=None,
+    product_line=None,
+    segment=None,
+    metric=None,
+) -> pd.DataFrame:
     scoped = df[df["month"] == month]
-    if region:
+    if region and "region" in scoped.columns:
         scoped = scoped[scoped["region"] == region]
-    if bu:
+    if bu and "bu" in scoped.columns:
         scoped = scoped[scoped["bu"] == bu]
-    if product_line:
+    if product_line and "product_line" in scoped.columns:
         scoped = scoped[scoped["product_line"] == product_line]
     if segment and "segment" in scoped.columns:
         scoped = scoped[scoped["segment"] == segment]
+    if metric and "metric" in scoped.columns:
+        scoped = scoped[scoped["metric"] == metric]
     return scoped
 
 

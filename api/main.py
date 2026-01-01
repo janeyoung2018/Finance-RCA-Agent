@@ -12,7 +12,9 @@ class RCARequest(BaseModel):
     bu: Optional[str] = None
     product_line: Optional[str] = None
     segment: Optional[str] = None
+    metric: Optional[str] = None
     comparison: str = "plan"  # plan | prior
+    full_sweep: bool = False
 
 
 class RCAResponse(BaseModel):

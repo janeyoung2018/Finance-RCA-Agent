@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchRca, startRca } from "./api";
+import { OPTION_VALUES } from "./optionValues";
 import type { RCARequest, RCAResponse } from "./types";
 
 const DEFAULT_FORM: RCARequest = {
   month: "2025-08",
-  region: "APAC",
-  bu: "Growth",
   comparison: "plan",
+  full_sweep: false,
 };
 
 const POLL_INTERVAL_MS = 1500;
@@ -45,6 +45,10 @@ function App() {
     setForm((prev) => ({ ...prev, [key]: e.target.value || undefined }));
   };
 
+  const handleToggle = (key: keyof RCARequest) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm((prev) => ({ ...prev, [key]: e.target.checked }));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -72,31 +76,78 @@ function App() {
           </label>
           <label>
             <span>Region</span>
-            <input value={form.region ?? ""} onChange={handleChange("region")} placeholder="APAC" />
+            <select value={form.region ?? ""} onChange={handleChange("region")}>
+              <option value="">All (sweep)</option>
+              {OPTION_VALUES.regions.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             <span>BU</span>
-            <input value={form.bu ?? ""} onChange={handleChange("bu")} placeholder="Growth" />
+            <select value={form.bu ?? ""} onChange={handleChange("bu")}>
+              <option value="">All (sweep)</option>
+              {OPTION_VALUES.bus.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             <span>Product Line</span>
-            <input value={form.product_line ?? ""} onChange={handleChange("product_line")} placeholder="Gamma" />
+            <select value={form.product_line ?? ""} onChange={handleChange("product_line")}>
+              <option value="">All (sweep)</option>
+              {OPTION_VALUES.product_lines.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             <span>Segment</span>
-            <input value={form.segment ?? ""} onChange={handleChange("segment")} placeholder="Enterprise" />
+            <select value={form.segment ?? ""} onChange={handleChange("segment")}>
+              <option value="">All (sweep)</option>
+              {OPTION_VALUES.segments.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Metric</span>
+            <select value={form.metric ?? ""} onChange={handleChange("metric")}>
+              <option value="">All (sweep)</option>
+              {OPTION_VALUES.metrics.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             <span>Comparison</span>
             <select value={form.comparison ?? "plan"} onChange={handleChange("comparison")}>
-              <option value="plan">Plan</option>
-              <option value="prior">Prior</option>
+              {OPTION_VALUES.comparisons.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
             </select>
           </label>
         </div>
         <button type="submit" disabled={!canSubmit}>
           {polling ? "Running..." : "Start RCA"}
         </button>
+        <label className="checkbox">
+          <input type="checkbox" checked={form.full_sweep ?? false} onChange={handleToggle("full_sweep")} />
+          <span>Run full-sweep RCA across regions, BUs, product lines, and segments</span>
+        </label>
+        <p className="hint">Leave scope fields blank to sweep all slices for the selected month.</p>
         {error && <p className="error">{error}</p>}
       </form>
 
