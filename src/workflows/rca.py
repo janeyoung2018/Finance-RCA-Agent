@@ -217,9 +217,11 @@ async def _run_single_scope(job: RCAJob, run_id: str, repo: DataRepository, agen
         fx_serialized,
         events_serialized,
         scope_label=scope_label,
+        filters=filters,
+        month=job.month,
     )
     synthesis_serialized = ensure_serializable(synthesis)
-    finance_rollup = _build_finance_rollup(filter_by_scope(repo.finance(), job.month, **{k: v for k, v in filters.items() if k != "metric"}))
+    finance_rollup = _build_finance_rollup(filter_by_scope(repo.finance(), job.month, **filters))
     finance_rollup_serialized = ensure_serializable(finance_rollup)
 
     result = {
@@ -232,6 +234,8 @@ async def _run_single_scope(job: RCAJob, run_id: str, repo: DataRepository, agen
         "synthesis": synthesis_serialized,
         "filters": filters,
         "scope": scope_label,
+        "month": job.month,
+        "comparison": job.comparison,
         "rollup": finance_rollup_serialized,
     }
 
@@ -273,8 +277,16 @@ async def _run_full_sweep(job: RCAJob, run_id: str, repo: DataRepository, agents
             )
         )
 
-    sweep_summary = agents["synthesis"].summarize_sweep(sweep_results)
-    finance_df_for_rollup = filter_by_scope(repo.finance(), job.month, region=job.region, bu=job.bu, product_line=job.product_line, segment=job.segment)
+    sweep_summary = agents["synthesis"].summarize_sweep(sweep_results, base_filters=base_filters, month=job.month)
+    finance_df_for_rollup = filter_by_scope(
+        repo.finance(),
+        job.month,
+        region=job.region,
+        bu=job.bu,
+        product_line=job.product_line,
+        segment=job.segment,
+        metric=job.metric,
+    )
     rollup = _build_finance_rollup(finance_df_for_rollup)
     domain_breakdown = _build_domain_breakdown(sweep_results)
     run_store.upsert(
@@ -288,6 +300,9 @@ async def _run_full_sweep(job: RCAJob, run_id: str, repo: DataRepository, agents
                 "portfolio": ensure_serializable(sweep_summary),
                 "rollup": ensure_serializable(rollup),
                 "domains": ensure_serializable(domain_breakdown),
+                "filters": base_filters,
+                "month": job.month,
+                "comparison": job.comparison,
             },
         )
     )

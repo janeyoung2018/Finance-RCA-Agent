@@ -21,6 +21,8 @@ class SynthesisAgent:
         fx: Dict,
         events: Dict,
         scope_label: Optional[str] = None,
+        filters: Optional[Dict[str, str]] = None,
+        month: Optional[str] = None,
     ) -> Dict:
         summary_parts: List[str] = []
         findings: List[Dict] = []
@@ -60,6 +62,9 @@ class SynthesisAgent:
             shipments,
             fx,
             events,
+            filters,
+            scope_label,
+            month,
         )
 
         return {
@@ -70,7 +75,7 @@ class SynthesisAgent:
             "llm_decision_summary": decision_summary,
         }
 
-    def summarize_sweep(self, scope_results: Dict[str, Dict]) -> Dict:
+    def summarize_sweep(self, scope_results: Dict[str, Dict], base_filters: Optional[Dict[str, str]] = None, month: Optional[str] = None) -> Dict:
         """
         Create a portfolio-level overview across multiple scope syntheses.
         """
@@ -87,7 +92,7 @@ class SynthesisAgent:
 
         top_hotspots = [{"domain": domain, "occurrences": count} for domain, count in hotspots.most_common()]
         portfolio_brief = " ".join(scope_summaries) if scope_summaries else "No completed scopes."
-        decision_summary = self._llm_decision_support_portfolio(portfolio_brief, top_hotspots, scope_results)
+        decision_summary = self._llm_decision_support_portfolio(portfolio_brief, top_hotspots, scope_results, base_filters, month)
         return {
             "portfolio_brief": portfolio_brief,
             "rule_portfolio_brief": portfolio_brief,
@@ -142,39 +147,56 @@ class SynthesisAgent:
         shipments: Dict,
         fx: Dict,
         events: Dict,
+        filters: Optional[Dict[str, str]],
+        scope_label: Optional[str],
+        month: Optional[str],
     ) -> str:
-        prompt = self._decision_support_prompt(rule_summary, brief_report, finance, demand, supply, shipments, fx, events)
+        prompt = self._decision_support_prompt(
+            rule_summary,
+            brief_report,
+            finance,
+            demand,
+            supply,
+            shipments,
+            fx,
+            events,
+            filters,
+            scope_label,
+            month,
+        )
         if self.llm:
             try:
                 llm_result = self.llm(prompt)
                 if llm_result:
                     logging.getLogger(__name__).debug("Scope LLM decision summary produced.")
-                    return llm_result
+                    return self._normalize_llm_text(llm_result)
                 logging.getLogger(__name__).info("Scope LLM returned empty response; using fallback.")
             except Exception:
                 # Fall back if the LLM call fails to keep workflow deterministic.
                 logging.getLogger(__name__).warning("Scope LLM call failed; using fallback.", exc_info=True)
                 pass
-        return self._fallback_decision_brief(finance, demand, supply, shipments, fx, events, rule_summary)
+        return self._fallback_decision_brief(finance, demand, supply, shipments, fx, events, rule_summary, filters, scope_label, month)
 
     def _llm_decision_support_portfolio(
         self,
         portfolio_brief: str,
         hotspots: List[Dict],
         scope_results: Dict[str, Dict],
+        base_filters: Optional[Dict[str, str]],
+        month: Optional[str],
     ) -> str:
-        prompt = self._portfolio_decision_prompt(portfolio_brief, hotspots)
+        prompt = self._portfolio_decision_prompt(portfolio_brief, hotspots, base_filters, month)
         if self.llm:
             try:
                 llm_result = self.llm(prompt)
                 if llm_result:
                     logging.getLogger(__name__).debug("Portfolio LLM decision summary produced.")
-                    return llm_result
+                    return self._normalize_llm_text(llm_result)
                 logging.getLogger(__name__).info("Portfolio LLM returned empty response; using fallback.")
             except Exception:
                 logging.getLogger(__name__).warning("Portfolio LLM call failed; using fallback.", exc_info=True)
                 pass
-        return self._fallback_portfolio_brief(portfolio_brief, hotspots, scope_results)
+        return self._fallback_portfolio_brief(portfolio_brief, hotspots, scope_results, base_filters, month)
 
     def _decision_support_prompt(
         self,
@@ -186,30 +208,39 @@ class SynthesisAgent:
         shipments: Dict,
         fx: Dict,
         events: Dict,
+        filters: Optional[Dict[str, str]],
+        scope_label: Optional[str],
+        month: Optional[str],
     ) -> str:
         """
         Compact prompt to steer an LLM toward decision-support (not raw restatement).
         """
+        filter_line = self._format_filters(filters, month)
+        comparison = finance.get("comparison") or "plan"
         lines = [
-            "You are a finance RCA decision-support agent.",
-            "Summarize actionable insights, cross-cutting themes, risks, and next actions in <=120 words.",
-            "Do not restate raw tables; focus on implications.",
+            "You are a finance RCA decision-support agent writing for finance leads.",
+            "Anchor on the selected scope and filters; avoid generic advice.",
+            "Return 3-5 short lines prefixed with '-' (no markdown emphasis or asterisks).",
+            f"Scope: {scope_label or 'selected scope'} | Filters: {filter_line} | Comparison: {comparison}",
             f"Rule summary: {rule_summary}",
-            f"Brief report: {brief_report}",
+            f"Brief narrative: {brief_report}",
             f"Finance drivers: {self._format_top_driver(finance) or 'none'}",
             f"Demand signals: {self._format_signal_counts(demand.get('signals'))}",
             f"Supply signals: {self._format_signal_counts(supply.get('signals'))}",
             f"Shipments signals: {self._format_signal_counts(shipments.get('signals'))}",
             f"FX signals: {self._format_signal_counts(fx.get('signals'))}",
             f"Events: {len(events.get('events') or [])}",
+            "Focus on implications (why it moved, what to watch, next action owners).",
         ]
         return "\n".join(lines)
 
-    def _portfolio_decision_prompt(self, portfolio_brief: str, hotspots: List[Dict]) -> str:
+    def _portfolio_decision_prompt(self, portfolio_brief: str, hotspots: List[Dict], base_filters: Optional[Dict[str, str]], month: Optional[str]) -> str:
         return "\n".join(
             [
                 "You are summarizing a multi-scope RCA sweep for executives.",
                 "Deliver decision-ready insights, themes, and top follow-ups in <=120 words.",
+                "Return 3-5 short lines prefixed with '-' (no markdown emphasis or asterisks).",
+                f"Month: {month or 'unspecified'} | Base filters: {self._format_filters(base_filters, None)}",
                 f"Rule-based portfolio brief: {portfolio_brief}",
                 f"Hotspots by domain: {hotspots}",
             ]
@@ -224,10 +255,14 @@ class SynthesisAgent:
         fx: Dict,
         events: Dict,
         rule_summary: str,
+        filters: Optional[Dict[str, str]],
+        scope_label: Optional[str],
+        month: Optional[str],
     ) -> str:
         driver = self._format_top_driver(finance)
         ops_signals = self._format_ops_signals(demand, supply, shipments, fx)
         events_count = len(events.get("events") or [])
+        scope_context = self._format_filters(filters, month)
 
         risks: List[str] = []
         if not ops_signals:
@@ -246,26 +281,31 @@ class SynthesisAgent:
             actions.append("Review hedges/pricing for FX-sensitive regions")
 
         parts: List[str] = []
-        parts.append(f"Reference (rule-based): {rule_summary}")
+        parts.append(f"- Scope: {scope_label or 'selected scope'} | Filters: {scope_context}")
+        parts.append(f"- Reference: {rule_summary}")
         if driver:
-            parts.append(f"Primary driver: {driver}.")
+            parts.append(f"- Primary driver: {driver}.")
         if ops_signals:
-            parts.append(f"Ops signals: {ops_signals}.")
+            parts.append(f"- Ops signals: {ops_signals}.")
         if events_count:
-            parts.append(f"Events to factor: {events_count} recorded.")
+            parts.append(f"- Events to factor: {events_count} recorded.")
         if risks:
-            parts.append(f"Risks: {', '.join(risks)}.")
+            parts.append(f"- Risks: {', '.join(risks)}.")
         if actions:
-            parts.append(f"Next actions: {', '.join(actions)}.")
-        return " ".join(parts)
+            parts.append(f"- Next actions: {', '.join(actions)}.")
+        return "\n".join(parts)
 
-    def _fallback_portfolio_brief(self, portfolio_brief: str, hotspots: List[Dict], scope_results: Dict[str, Dict]) -> str:
+    def _fallback_portfolio_brief(self, portfolio_brief: str, hotspots: List[Dict], scope_results: Dict[str, Dict], base_filters: Optional[Dict[str, str]], month: Optional[str]) -> str:
         themes = ", ".join([f"{h['domain']} x{h['occurrences']}" for h in hotspots]) if hotspots else "No dominant hotspots"
         scope_count = len(scope_results)
-        return (
-            f"Reference (rule-based) sweep: {portfolio_brief} | "
-            f"Themes: {themes}. | "
-            f"Coverage: {scope_count} scopes processed."
+        filters_line = self._format_filters(base_filters, month)
+        return "\n".join(
+            [
+                f"- Month: {month or 'unspecified'} | Filters: {filters_line}",
+                f"- Reference sweep: {portfolio_brief}",
+                f"- Themes: {themes}.",
+                f"- Coverage: {scope_count} scopes processed.",
+            ]
         )
 
     def _format_top_driver(self, finance: Dict) -> Optional[str]:
@@ -305,3 +345,21 @@ class SynthesisAgent:
             if payload:
                 sections.append(f"{title}:{self._format_signal_counts(payload)}")
         return "; ".join(sections)
+
+    def _format_filters(self, filters: Optional[Dict[str, str]], month: Optional[str]) -> str:
+        if not filters and not month:
+            return "none"
+        entries: List[str] = []
+        if month:
+            entries.append(f"month={month}")
+        for key in ["region", "bu", "product_line", "segment", "metric", "comparison"]:
+            value = (filters or {}).get(key)
+            if value:
+                entries.append(f"{key}={value}")
+        return ", ".join(entries) if entries else "unfiltered"
+
+    def _normalize_llm_text(self, text: str) -> str:
+        if not text:
+            return ""
+        cleaned = text.replace("**", "")
+        return "\n".join([line.strip() for line in cleaned.splitlines() if line.strip()])

@@ -133,6 +133,21 @@ summary {
   margin-top: 16px;
 }
 
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .rollup-section, .domain-section {
   margin-top: 12px;
 }
@@ -183,6 +198,16 @@ summary {
   color: #0f172a;
 }
 
+.chip-ghost {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.chip-muted {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
 .chips {
   list-style: none;
   padding: 0;
@@ -195,4 +220,8 @@ summary {
 .brief {
   margin: 4px 0;
   color: #334155;
+}
+
+.brief.muted {
+  color: #64748b;
 }

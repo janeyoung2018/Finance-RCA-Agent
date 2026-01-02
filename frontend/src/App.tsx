@@ -13,11 +13,24 @@ const POLL_INTERVAL_MS = 1500;
 
 function App() {
   const [form, setForm] = useState<RCARequest>(DEFAULT_FORM);
+  const [submittedForm, setSubmittedForm] = useState<RCARequest | null>(null);
   const [currentRun, setCurrentRun] = useState<RCAResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
 
   const canSubmit = useMemo(() => Boolean(form.month), [form.month]);
+  const resultPayload = currentRun?.result as any;
+  const resultFilters = useMemo(() => {
+    if (!resultPayload) return undefined;
+    const merged = { ...(resultPayload.filters || {}) };
+    if (resultPayload.month) merged.month = resultPayload.month;
+    if (resultPayload.comparison) merged.comparison = resultPayload.comparison;
+    return merged;
+  }, [resultPayload]);
+  const filterSource = resultFilters ?? submittedForm ?? undefined;
+  const filterChips = useMemo(() => buildFilterChips(filterSource), [filterSource]);
+  const scopeLabel =
+    (resultPayload?.scope as string | undefined) || (resultPayload?.scopes ? "portfolio sweep" : undefined);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
@@ -54,6 +67,7 @@ function App() {
     setError(null);
     try {
       const res = await startRca(form);
+      setSubmittedForm({ ...form });
       setCurrentRun(res);
       setPolling(true);
     } catch (err) {
@@ -166,8 +180,8 @@ function App() {
           <p className="message">{currentRun.message}</p>
           {currentRun.result && (
             <>
-              {renderDecisionSummaries(currentRun.result as any)}
-              {renderRollup((currentRun.result as any).rollup as Rollup | undefined)}
+              {renderDecisionSummaries(currentRun.result as any, filterChips, scopeLabel)}
+              {renderRollup((currentRun.result as any).rollup as Rollup | undefined, filterChips, scopeLabel)}
               {renderDomains((currentRun.result as any).domains as Domains | undefined)}
             </>
           )}
@@ -185,14 +199,17 @@ function App() {
 
 export default App;
 
-function renderRollup(rollup?: Rollup) {
+function renderRollup(rollup?: Rollup, filters: FilterChip[] = [], scopeLabel?: string) {
   if (!rollup) return null;
   const overall = rollup.overall;
   const regions = rollup.regions;
   const bus = rollup.bus;
   return (
     <div className="rollup">
-      <h3>Finance Rollup (Actual vs Plan/Prior)</h3>
+      <div className="section-header">
+        <h3>Finance Rollup (Actual vs Plan/Prior)</h3>
+        <FilterBar chips={filters} scopeLabel={scopeLabel} />
+      </div>
       {overall && (
         <div className="rollup-section">
           <h4>Overall</h4>
@@ -272,7 +289,7 @@ function renderDomains(domains?: Domains) {
   );
 }
 
-function renderDecisionSummaries(result: any) {
+function renderDecisionSummaries(result: any, filters: FilterChip[] = [], scopeLabel?: string) {
   const scopeSynthesis = result?.synthesis as any;
   const portfolio = result?.portfolio as any;
 
@@ -286,22 +303,27 @@ function renderDecisionSummaries(result: any) {
 
   return (
     <div className="domains">
-      <h3>Decision Support Summaries</h3>
+      <div className="section-header">
+        <h3>Decision Support Summaries</h3>
+        <FilterBar chips={filters} scopeLabel={scopeLabel} />
+      </div>
       {scopeDecision && (
         <div className="domain-card">
           <div className="domain-header">
-            <strong>Scope</strong>
+            <span className="chip chip-ghost">Scope decision</span>
+            {scopeLabel && <span className="chip chip-muted">{scopeLabel}</span>}
           </div>
-          <p className="brief"><strong>LLM:</strong> {scopeDecision}</p>
-          {scopeRule && <p className="brief">{scopeRule}</p>}
+          {renderDecisionText(scopeDecision)}
+          {scopeRule && <p className="brief muted">{scopeRule}</p>}
         </div>
       )}
       {portfolioDecision && (
         <div className="domain-card">
           <div className="domain-header">
-            <strong>Portfolio Sweep</strong>
+            <span className="chip chip-ghost">Portfolio sweep</span>
           </div>
-          <p className="brief"><strong>LLM:</strong> {portfolioDecision}</p>
+          {renderDecisionText(portfolioDecision)}
+          {portfolioRule && <p className="brief muted">{portfolioRule}</p>}
         </div>
       )}
     </div>
@@ -387,6 +409,53 @@ function DomainCard({ name, entry }: { name: string; entry: any }) {
       )}
     </div>
   );
+}
+
+type FilterChip = { label: string; value: string };
+
+function buildFilterChips(filters?: Record<string, any> | null): FilterChip[] {
+  if (!filters) return [];
+  const mapping: [keyof RCARequest | "month" | "comparison", string][] = [
+    ["month", "Month"],
+    ["comparison", "Comparison"],
+    ["region", "Region"],
+    ["bu", "BU"],
+    ["product_line", "Product Line"],
+    ["segment", "Segment"],
+    ["metric", "Metric"],
+  ];
+  const chips: FilterChip[] = [];
+  for (const [key, label] of mapping) {
+    const value = (filters as any)[key];
+    if (value !== undefined && value !== null && value !== "") {
+      chips.push({ label, value: String(value) });
+    }
+  }
+  return chips;
+}
+
+function FilterBar({ chips, scopeLabel }: { chips: FilterChip[]; scopeLabel?: string }) {
+  if ((!chips || chips.length === 0) && !scopeLabel) return null;
+  return (
+    <div className="filter-bar">
+      {scopeLabel && <span className="chip chip-muted">Scope: {scopeLabel}</span>}
+      {chips.map((chip) => (
+        <span key={`${chip.label}-${chip.value}`} className="chip chip-ghost">
+          {chip.label}: {chip.value}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function renderDecisionText(text: string) {
+  const cleaned = (text || "").replace(/\*\*/g, "");
+  if (!cleaned.trim()) return null;
+  return cleaned.split(/\n+/).map((line, idx) => (
+    <p key={idx} className="brief">
+      {line.trim()}
+    </p>
+  ));
 }
 
 function fmt(value: any) {
