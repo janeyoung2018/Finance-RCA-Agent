@@ -4,6 +4,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from observability.telemetry import init_telemetry
 from src.workflows.rca import RCAJob, enqueue_rca, get_rca_status
 
 class RCARequest(BaseModel):
@@ -39,6 +40,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    init_telemetry()
 
     @app.get("/health")
     async def health() -> dict:

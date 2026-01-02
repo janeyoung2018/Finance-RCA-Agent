@@ -14,10 +14,11 @@
 - Option values generated from data via `scripts/generate_option_values.py` -> `frontend/src/optionValues.ts`.
 - README mentions sweep usage and new rollup/domain fields.
 - LangGraph-based orchestration for single scopes and full sweeps with progress updates stored in the run store.
+- OpenTelemetry + Phoenix wiring captures RCA runs, per-agent spans, and LLM usage (latency/tokens/cost) with OTLP exporters and optional local Phoenix dashboard.
 
 ## Not Implemented / Gaps vs README Vision
 - No durable storage (still in-memory run store); no CI/lint/test automation beyond pytest placeholder.
 - Synthesis/challenge are rule-based; no real LLM-driven reasoning.
-- No auth, tracing, or cost/latency metrics on the API.
+- No auth; metrics beyond traces/tokens/cost still minimal.
 - Tests not run in this environment; coverage likely thin.
 - Frontend remains minimal (no run history, pagination, richer UX); `comparison="all"` handling is basic display only.

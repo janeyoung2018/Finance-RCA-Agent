@@ -8,7 +8,10 @@ configured so the pipeline stays rule-based with deterministic fallbacks.
 
 import logging
 import os
+import time
 from typing import Callable, Optional
+
+from observability.telemetry import estimate_cost, llm_span, record_llm_usage
 
 try:
     from openai import OpenAI
@@ -37,16 +40,29 @@ def build_llm() -> Optional[Callable[[str], str]]:
         client = genai.Client(api_key=google_key)
 
         def llm(prompt: str) -> str:
+            start = time.perf_counter()
             try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config={
-                        "temperature": temperature,
-                        "max_output_tokens": max_tokens,
-                    },
-                )
+                with llm_span(provider="gemini", model=model_name):
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config={
+                            "temperature": temperature,
+                            "max_output_tokens": max_tokens,
+                        },
+                    )
+                latency_ms = (time.perf_counter() - start) * 1000
                 text = getattr(response, "text", None)
+                usage_meta = getattr(response, "usage_metadata", None)
+                prompt_tokens = getattr(usage_meta, "prompt_token_count", None) if usage_meta else None
+                completion_tokens = getattr(usage_meta, "candidates_token_count", None) if usage_meta else None
+                record_llm_usage(
+                    provider="gemini",
+                    model=model_name,
+                    latency_ms=latency_ms,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
                 if text:
                     logging.getLogger(__name__).debug("Gemini response.text: %s", text)
                     return text
@@ -93,15 +109,33 @@ def build_llm() -> Optional[Callable[[str], str]]:
     client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
 
     def llm(prompt: str) -> str:
+        start = time.perf_counter()
         try:
-            response = client.chat.completions.create(
+            with llm_span(provider="openai", model=model):
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are a concise decision-support summarizer."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            latency_ms = (time.perf_counter() - start) * 1000
+            usage = getattr(response, "usage", None)
+            prompt_tokens = None
+            completion_tokens = None
+            if usage:
+                prompt_tokens = getattr(usage, "prompt_tokens", None)
+                completion_tokens = getattr(usage, "completion_tokens", None)
+            cost_usd = estimate_cost(prompt_tokens or 0, completion_tokens or 0) if usage else None
+            record_llm_usage(
+                provider="openai",
                 model=model,
-                messages=[
-                    {"role": "system", "content": "You are a concise decision-support summarizer."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
+                latency_ms=latency_ms,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                explicit_cost_usd=cost_usd,
             )
             content = response.choices[0].message.content if response.choices else ""
             logging.getLogger(__name__).debug("OpenAI response content: %s", content)

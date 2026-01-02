@@ -1,12 +1,16 @@
 import asyncio
+import json
 import logging
+import time
 from collections import Counter
 from dataclasses import dataclass
 from typing import Dict, List, Optional, TypedDict
 
 import pandas as pd
 from langgraph.graph import END, START, StateGraph
+from opentelemetry.trace.status import Status, StatusCode
 
+from observability.telemetry import agent_span, get_tracer, init_telemetry
 from src.agents.demand import DemandAgent
 from src.agents.events import EventsAgent
 from src.agents.finance import FinanceVarianceAgent
@@ -67,6 +71,8 @@ def run_rca(job: RCAJob) -> dict:
 
 async def _execute_rca_run(job: RCAJob, run_id: str) -> None:
     """Run RCA progression via LangGraph."""
+    init_telemetry()
+    tracer = get_tracer(__name__)
     run_store.upsert(
         RunRecord(
             run_id=run_id,
@@ -76,24 +82,30 @@ async def _execute_rca_run(job: RCAJob, run_id: str) -> None:
         )
     )
 
-    try:
-        repo = DataRepository()
-        agents = _init_agents()
-        scope_graph = _build_scope_graph(repo, agents)
+    with tracer.start_as_current_span(
+        "rca.run",
+        attributes={"rca.run_id": run_id, "rca.month": job.month, "rca.full_sweep": job.full_sweep},
+    ) as span:
+        try:
+            repo = DataRepository()
+            agents = _init_agents()
+            scope_graph = _build_scope_graph(repo, agents)
 
-        if job.full_sweep:
-            await _run_full_sweep(job, run_id, repo, agents, scope_graph)
-        else:
-            await _run_single_scope(job, run_id, repo, agents, scope_graph, scope_label="selected scope")
-    except Exception as exc:
-        run_store.upsert(
-            RunRecord(
-                run_id=run_id,
-                status="failed",
-                message=f"RCA workflow failed: {exc}",
-                payload=job.__dict__,
+            if job.full_sweep:
+                await _run_full_sweep(job, run_id, repo, agents, scope_graph)
+            else:
+                await _run_single_scope(job, run_id, repo, agents, scope_graph, scope_label="selected scope")
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            run_store.upsert(
+                RunRecord(
+                    run_id=run_id,
+                    status="failed",
+                    message=f"RCA workflow failed: {exc}",
+                    payload=job.__dict__,
+                )
             )
-        )
 
 
 def enqueue_rca(job: RCAJob, background_runner) -> dict:
@@ -172,17 +184,78 @@ def _build_scope_graph(repo: DataRepository, agents: Dict[str, object]):
         events_df = repo.events()
 
         finance_task = asyncio.to_thread(
+            _run_agent_with_span,
+            "finance",
             agents["finance"].analyze,
+            run_id,
+            scope_label,
+            filters,
+            job.month,
             finance_df,
             job.month,
             comparison=job.comparison,
             **filters,
         )
-        demand_task = asyncio.to_thread(agents["demand"].analyze, demand_df, job.month, **filters)
-        supply_task = asyncio.to_thread(agents["supply"].analyze, supply_df, job.month, **filters)
-        shipments_task = asyncio.to_thread(agents["shipments"].analyze, shipments_df, job.month, **filters)
-        fx_task = asyncio.to_thread(agents["fx"].analyze, fx_df, job.month, **filters)
-        events_task = asyncio.to_thread(agents["events"].analyze, events_df, job.month, **filters)
+        demand_task = asyncio.to_thread(
+            _run_agent_with_span,
+            "demand",
+            agents["demand"].analyze,
+            run_id,
+            scope_label,
+            filters,
+            job.month,
+            demand_df,
+            job.month,
+            **filters,
+        )
+        supply_task = asyncio.to_thread(
+            _run_agent_with_span,
+            "supply",
+            agents["supply"].analyze,
+            run_id,
+            scope_label,
+            filters,
+            job.month,
+            supply_df,
+            job.month,
+            **filters,
+        )
+        shipments_task = asyncio.to_thread(
+            _run_agent_with_span,
+            "shipments",
+            agents["shipments"].analyze,
+            run_id,
+            scope_label,
+            filters,
+            job.month,
+            shipments_df,
+            job.month,
+            **filters,
+        )
+        fx_task = asyncio.to_thread(
+            _run_agent_with_span,
+            "fx",
+            agents["fx"].analyze,
+            run_id,
+            scope_label,
+            filters,
+            job.month,
+            fx_df,
+            job.month,
+            **filters,
+        )
+        events_task = asyncio.to_thread(
+            _run_agent_with_span,
+            "events",
+            agents["events"].analyze,
+            run_id,
+            scope_label,
+            filters,
+            job.month,
+            events_df,
+            job.month,
+            **filters,
+        )
 
         (
             finance_res,
@@ -539,3 +612,28 @@ def _build_domain_breakdown(sweep_results: Dict[str, Dict]) -> Dict:
                 bus[bu_value] = summary_entry
 
     return {"regions": regions, "bus": bus}
+
+
+def _run_agent_with_span(
+    agent_name: str,
+    fn,
+    run_id: Optional[str],
+    scope_label: Optional[str],
+    filters: Dict[str, Optional[str]],
+    month: Optional[str],
+    *fn_args,
+    **kwargs,
+):
+    """
+    Execute an agent call inside a tracing span to capture latency and scope metadata.
+    """
+    with agent_span(agent_name, run_id, scope_label, filters, month) as span:
+        start = time.perf_counter()
+        result = fn(*fn_args, **kwargs)
+        latency_ms = (time.perf_counter() - start) * 1000
+        span.set_attribute("agent.latency_ms", latency_ms)
+        span.set_attribute("rca.filters", json.dumps(filters, sort_keys=True))
+        span.set_attribute("rca.run_id", run_id)
+        span.set_attribute("rca.scope", scope_label)
+        span.set_attribute("agent.output.size_bytes", len(json.dumps(result, default=str)))
+        return result
