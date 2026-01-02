@@ -1,31 +1,26 @@
-"""
-Stubbed RCA workflow orchestrator with simulated background progression.
-
-Replace the simulated run with LangGraph/LangChain orchestration. The stub
-creates a run record, then updates status over time in the background.
-"""
-
 import asyncio
+import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, TypedDict
 
 import pandas as pd
+from langgraph.graph import END, START, StateGraph
 
 from src.agents.demand import DemandAgent
+from src.agents.events import EventsAgent
 from src.agents.finance import FinanceVarianceAgent
 from src.agents.fx import FXAgent
+from src.agents.shipments import ShipmentsAgent
 from src.agents.supply import SupplyAgent
 from src.agents.synthesis import SynthesisAgent
-from src.llm.client import build_llm
-import logging
-from src.agents.shipments import ShipmentsAgent
-from src.agents.events import EventsAgent
 from src.config import TOP_CONTRIBUTORS
+from src.llm.client import build_llm
 from src.memory.run_store import RunRecord, run_store
 from src.tools.data_loader import DataRepository
-from src.tools.variance import filter_by_scope
 from src.tools.normalize import ensure_serializable
+from src.tools.variance import filter_by_scope
+
 
 @dataclass
 class RCAJob:
@@ -39,28 +34,44 @@ class RCAJob:
     full_sweep: bool = False
 
 
+class ScopeState(TypedDict, total=False):
+    job: "RCAJob"
+    run_id: str
+    scope_label: str
+    filters: Dict[str, Optional[str]]
+    finance: Dict
+    demand: Dict
+    supply: Dict
+    shipments: Dict
+    fx: Dict
+    events: Dict
+    synthesis: Dict
+    rollup: Dict
+    result: Dict
+
+
 def run_rca(job: RCAJob) -> dict:
-    """Create a run record and queue simulated execution."""
+    """Create a run record and queue LangGraph execution."""
     # If user did not select a slice, default to sweeping all slices for the month.
     job.full_sweep = job.full_sweep or _is_unscoped(job)
     run_id = _build_run_id(job)
     record = RunRecord(
         run_id=run_id,
         status="queued",
-        message="RCA workflow queued (stub). Replace with LangGraph orchestration.",
+        message="RCA workflow queued with LangGraph orchestration.",
         payload=job.__dict__,
     )
     run_store.upsert(record)
     return {"run_id": record.run_id, "status": record.status, "message": record.message}
 
 
-async def _simulate_rca_run(job: RCAJob, run_id: str) -> None:
-    """Run RCA progression; replace with actual LangGraph orchestration."""
+async def _execute_rca_run(job: RCAJob, run_id: str) -> None:
+    """Run RCA progression via LangGraph."""
     run_store.upsert(
         RunRecord(
             run_id=run_id,
             status="running",
-            message="RCA workflow running.",
+            message="RCA workflow running via LangGraph.",
             payload=job.__dict__,
         )
     )
@@ -68,11 +79,12 @@ async def _simulate_rca_run(job: RCAJob, run_id: str) -> None:
     try:
         repo = DataRepository()
         agents = _init_agents()
+        scope_graph = _build_scope_graph(repo, agents)
 
         if job.full_sweep:
-            await _run_full_sweep(job, run_id, repo, agents)
+            await _run_full_sweep(job, run_id, repo, agents, scope_graph)
         else:
-            await _run_single_scope(job, run_id, repo, agents, scope_label="selected scope")
+            await _run_single_scope(job, run_id, repo, agents, scope_graph, scope_label="selected scope")
     except Exception as exc:
         run_store.upsert(
             RunRecord(
@@ -91,7 +103,7 @@ def enqueue_rca(job: RCAJob, background_runner) -> dict:
     `background_runner` should support `.add_task(callable, *args)`, e.g. FastAPI BackgroundTasks.
     """
     result = run_rca(job)
-    background_runner.add_task(_simulate_rca_run, job, result["run_id"])
+    background_runner.add_task(_execute_rca_run, job, result["run_id"])
     return result
 
 
@@ -136,122 +148,173 @@ def _init_agents() -> Dict[str, object]:
     }
 
 
-async def _run_single_scope(job: RCAJob, run_id: str, repo: DataRepository, agents: Dict[str, object], scope_label: str, extra_filters: Optional[Dict] = None) -> Dict:
-    filters = {
-        "region": job.region,
-        "bu": job.bu,
-        "product_line": job.product_line,
-        "segment": job.segment,
-        "metric": job.metric,
-    }
-    if extra_filters:
-        filters.update(extra_filters)
+def _build_scope_graph(repo: DataRepository, agents: Dict[str, object]):
+    """
+    LangGraph orchestrator for a single RCA scope.
 
-    finance_res = agents["finance"].analyze(
-        repo.finance(),
-        job.month,
-        comparison=job.comparison,
-        **filters,
-    )
-    finance_serialized = ensure_serializable(finance_res)
-    run_store.upsert(
-        RunRecord(
-            run_id=run_id,
-            status="finance_completed",
-            message=f"Finance analysis completed for {scope_label}.",
-            payload=job.__dict__,
-            result={"finance": finance_serialized},
+    Nodes:
+    - analyze_scope: runs specialist agents in parallel
+    - synthesize_scope: aggregates findings and builds rollups
+    """
+    graph: StateGraph = StateGraph(ScopeState)
+
+    async def analyze_scope(state: ScopeState) -> ScopeState:
+        job = state["job"]
+        filters = state.get("filters", {})
+        scope_label = state.get("scope_label") or "selected scope"
+        run_id = state.get("run_id", "unknown")
+
+        finance_df = repo.finance()
+        demand_df = repo.orders()
+        supply_df = repo.supply()
+        shipments_df = repo.shipments()
+        fx_df = repo.fx()
+        events_df = repo.events()
+
+        finance_task = asyncio.to_thread(
+            agents["finance"].analyze,
+            finance_df,
+            job.month,
+            comparison=job.comparison,
+            **filters,
         )
-    )
+        demand_task = asyncio.to_thread(agents["demand"].analyze, demand_df, job.month, **filters)
+        supply_task = asyncio.to_thread(agents["supply"].analyze, supply_df, job.month, **filters)
+        shipments_task = asyncio.to_thread(agents["shipments"].analyze, shipments_df, job.month, **filters)
+        fx_task = asyncio.to_thread(agents["fx"].analyze, fx_df, job.month, **filters)
+        events_task = asyncio.to_thread(agents["events"].analyze, events_df, job.month, **filters)
 
-    demand_res = agents["demand"].analyze(
-        repo.orders(),
-        job.month,
-        **filters,
-    )
-    supply_res = agents["supply"].analyze(
-        repo.supply(),
-        job.month,
-        **filters,
-    )
-    shipments_res = agents["shipments"].analyze(
-        repo.shipments(),
-        job.month,
-        **filters,
-    )
-    fx_res = agents["fx"].analyze(repo.fx(), job.month, **filters)
-    events_res = agents["events"].analyze(
-        repo.events(),
-        job.month,
-        **filters,
-    )
-
-    demand_serialized = ensure_serializable(demand_res)
-    supply_serialized = ensure_serializable(supply_res)
-    shipments_serialized = ensure_serializable(shipments_res)
-    fx_serialized = ensure_serializable(fx_res)
-    events_serialized = ensure_serializable(events_res)
-
-    run_store.upsert(
-        RunRecord(
-            run_id=run_id,
-            status="synthesizing",
-            message=f"Aggregating findings for {scope_label}.",
-            payload=job.__dict__,
-            result={
-                "finance": finance_serialized,
-                "demand": demand_serialized,
-                "supply": supply_serialized,
-                "shipments": shipments_serialized,
-                "fx": fx_serialized,
-                "events": events_serialized,
-            },
+        (
+            finance_res,
+            demand_res,
+            supply_res,
+            shipments_res,
+            fx_res,
+            events_res,
+        ) = await asyncio.gather(
+            finance_task, demand_task, supply_task, shipments_task, fx_task, events_task
         )
-    )
 
-    synthesis = agents["synthesis"].synthesize(
-        finance_serialized,
-        demand_serialized,
-        supply_serialized,
-        shipments_serialized,
-        fx_serialized,
-        events_serialized,
-        scope_label=scope_label,
-        filters=filters,
-        month=job.month,
-    )
-    synthesis_serialized = ensure_serializable(synthesis)
-    finance_rollup = _build_finance_rollup(filter_by_scope(repo.finance(), job.month, **filters))
-    finance_rollup_serialized = ensure_serializable(finance_rollup)
+        finance_serialized = ensure_serializable(finance_res)
+        partial_result = {
+            "finance": finance_serialized,
+            "demand": ensure_serializable(demand_res),
+            "supply": ensure_serializable(supply_res),
+            "shipments": ensure_serializable(shipments_res),
+            "fx": ensure_serializable(fx_res),
+            "events": ensure_serializable(events_res),
+            "filters": filters,
+            "scope": scope_label,
+            "month": job.month,
+            "comparison": job.comparison,
+        }
 
-    result = {
-        "finance": finance_serialized,
-        "demand": demand_serialized,
-        "supply": supply_serialized,
-        "shipments": shipments_serialized,
-        "fx": fx_serialized,
-        "events": events_serialized,
-        "synthesis": synthesis_serialized,
+        run_store.upsert(
+            RunRecord(
+                run_id=run_id,
+                status="synthesizing",
+                message=f"Agent analyses completed for {scope_label}; preparing synthesis.",
+                payload=job.__dict__,
+                result=partial_result,
+            )
+        )
+        return partial_result
+
+    def synthesize_scope(state: ScopeState) -> ScopeState:
+        job = state["job"]
+        filters = state.get("filters", {})
+        scope_label = state.get("scope_label") or "selected scope"
+        run_id = state.get("run_id", "unknown")
+
+        finance = state.get("finance", {})
+        demand = state.get("demand", {})
+        supply = state.get("supply", {})
+        shipments = state.get("shipments", {})
+        fx = state.get("fx", {})
+        events = state.get("events", {})
+
+        synthesis = agents["synthesis"].synthesize(
+            finance,
+            demand,
+            supply,
+            shipments,
+            fx,
+            events,
+            scope_label=scope_label,
+            filters=filters,
+            month=job.month,
+        )
+        finance_rollup = _build_finance_rollup(filter_by_scope(repo.finance(), job.month, **filters))
+        synthesis_serialized = ensure_serializable(synthesis)
+        rollup_serialized = ensure_serializable(finance_rollup)
+
+        result = {
+            "finance": finance,
+            "demand": demand,
+            "supply": supply,
+            "shipments": shipments,
+            "fx": fx,
+            "events": events,
+            "synthesis": synthesis_serialized,
+            "filters": filters,
+            "scope": scope_label,
+            "month": job.month,
+            "comparison": job.comparison,
+            "rollup": rollup_serialized,
+        }
+
+        status = "scope_completed" if job.full_sweep else "completed"
+        message = f"Scope {scope_label} completed; awaiting sweep aggregation." if job.full_sweep else f"RCA workflow completed for {scope_label}."
+        status = "running" if job.full_sweep else status
+        run_store.upsert(
+            RunRecord(
+                run_id=run_id,
+                status=status,
+                message=message,
+                payload=job.__dict__,
+                result=result,
+            )
+        )
+        return {"synthesis": synthesis_serialized, "rollup": rollup_serialized, "result": result}
+
+    graph.add_node("analyze_scope", analyze_scope)
+    graph.add_node("synthesize_scope", synthesize_scope)
+    graph.add_edge(START, "analyze_scope")
+    graph.add_edge("analyze_scope", "synthesize_scope")
+    graph.add_edge("synthesize_scope", END)
+    return graph.compile()
+
+
+async def _run_single_scope(
+    job: RCAJob,
+    run_id: str,
+    repo: DataRepository,
+    agents: Dict[str, object],
+    scope_graph,
+    scope_label: str,
+    extra_filters: Optional[Dict] = None,
+) -> Dict:
+    filters = _merge_filters(job, extra_filters)
+    initial_state: ScopeState = {
+        "job": job,
+        "run_id": run_id,
+        "scope_label": scope_label,
         "filters": filters,
-        "scope": scope_label,
-        "month": job.month,
-        "comparison": job.comparison,
-        "rollup": finance_rollup_serialized,
     }
-
-    run_store.upsert(
-        RunRecord(
-            run_id=run_id,
-            status="completed",
-            message=f"RCA workflow completed for {scope_label}.",
-            payload=job.__dict__,
-            result=result,
-        )
-    )
+    final_state = await scope_graph.ainvoke(initial_state)
+    result = final_state.get("result")
+    if not result:
+        raise RuntimeError(f"LangGraph did not produce a result for {scope_label}.")
     return result
 
 
-async def _run_full_sweep(job: RCAJob, run_id: str, repo: DataRepository, agents: Dict[str, object]) -> None:
+async def _run_full_sweep(
+    job: RCAJob,
+    run_id: str,
+    repo: DataRepository,
+    agents: Dict[str, object],
+    scope_graph,
+) -> None:
     base_filters = {k: v for k, v in {
         "region": job.region,
         "bu": job.bu,
@@ -265,7 +328,7 @@ async def _run_full_sweep(job: RCAJob, run_id: str, repo: DataRepository, agents
 
     for idx, scope in enumerate(scopes, start=1):
         scope_label = scope["label"]
-        result = await _run_single_scope(job, run_id, repo, agents, scope_label=scope_label, extra_filters=scope["filters"])
+        result = await _run_single_scope(job, run_id, repo, agents, scope_graph, scope_label=scope_label, extra_filters=scope["filters"])
         sweep_results[scope_label] = result
         run_store.upsert(
             RunRecord(
@@ -306,6 +369,19 @@ async def _run_full_sweep(job: RCAJob, run_id: str, repo: DataRepository, agents
             },
         )
     )
+
+
+def _merge_filters(job: RCAJob, extra_filters: Optional[Dict] = None) -> Dict[str, Optional[str]]:
+    filters = {
+        "region": job.region,
+        "bu": job.bu,
+        "product_line": job.product_line,
+        "segment": job.segment,
+        "metric": job.metric,
+    }
+    if extra_filters:
+        filters.update(extra_filters)
+    return filters
 
 
 def _discover_scopes(repo: DataRepository, month: str, base_filters: Dict[str, str]) -> List[Dict[str, Dict]]:

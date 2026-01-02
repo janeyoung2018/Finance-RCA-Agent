@@ -13,9 +13,9 @@
 - Gemini-based LLM integration now includes richer response parsing and logging; added live connectivity test (`tests/test_gemini_live.py`) that loads `.env` when available.
 - Option values generated from data via `scripts/generate_option_values.py` -> `frontend/src/optionValues.ts`.
 - README mentions sweep usage and new rollup/domain fields.
+- LangGraph-based orchestration for single scopes and full sweeps with progress updates stored in the run store.
 
 ## Not Implemented / Gaps vs README Vision
-- Orchestration still a stubbed background task (no LangGraph/LangChain, challenge agent, or HITL loop).
 - No durable storage (still in-memory run store); no CI/lint/test automation beyond pytest placeholder.
 - Synthesis/challenge are rule-based; no real LLM-driven reasoning.
 - No auth, tracing, or cost/latency metrics on the API.
