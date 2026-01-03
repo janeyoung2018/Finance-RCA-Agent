@@ -11,7 +11,7 @@ The system analyzes **Actual vs Plan vs Prior** performance, identifies **what c
 - Business Units
 - Product Lines
 - Customer Segments
-- Demand, Supply, Pricing, FX, and Cost drivers
+-  
 
 The goal is **not** to build a BI dashboard or chatbot, but to demonstrate how **LLM-powered agents** can collaborate, reason over structured data, retain context over time, and produce **auditable, explainable analyses** with **human-in-the-loop control**.
 
@@ -134,6 +134,11 @@ This keeps agents:
 - Cost-efficient
 - Deterministic
 - Auditable
+
+### Run Store Persistence
+
+- Run status/results are persisted to SQLite at `data/run_store.sqlite` so background jobs survive API restarts.
+- Override the path with `RUN_STORE_PATH=/custom/location/run_store.sqlite` if deploying outside this repo layout.
 
 ---
 
