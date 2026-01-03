@@ -17,11 +17,11 @@
 - LangGraph-based orchestration for single scopes and full sweeps with progress updates stored in the run store.
 - OpenTelemetry + Phoenix wiring captures RCA runs, per-agent spans, and LLM usage (latency/tokens/cost) with OTLP exporters and optional local Phoenix dashboard.
 - Run store now uses durable SQLite storage at `data/run_store.sqlite` to persist run status/results across restarts.
-- GitHub Actions CI runs compile checks and pytest on push/PR.
+- GitHub Actions CI runs compile checks and pytest with coverage (xml artifact) on push/PR.
 - Dockerfiles added for API and frontend plus docker-compose for running both.
+- Coverage configured via pytest-cov (`pytest.ini`) producing terminal and XML reports.
 
 ## Not Implemented / Gaps vs README Vision
 - Synthesis/challenge are rule-based; no real LLM-driven reasoning.
 - No auth; metrics beyond traces/tokens/cost still minimal.
-- Tests not run in this environment; coverage likely thin.
 - Frontend still lacks richer RCA browsing (run detail deep-links, saved views, advanced comparison toggles) beyond the new history table.

@@ -270,7 +270,7 @@ Located in `frontend/` (Vite + React + TypeScript).
 6. UI includes persistent run history (powered by the durable run store) with pagination and status filters, plus clearer `comparison="all"` guidance.
 
 ### CI
-- GitHub Actions workflow (`.github/workflows/ci.yml`) runs compile checks and `pytest` on push/PR.
+- GitHub Actions workflow (`.github/workflows/ci.yml`) runs compile checks and `pytest` with coverage on push/PR and uploads `coverage.xml`.
 
 ### Docker
 - Backend: `docker build -t rca-api . && docker run -p 8000:8000 rca-api`
