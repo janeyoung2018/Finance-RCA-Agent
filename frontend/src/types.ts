@@ -54,5 +54,15 @@ export interface RCAResponse {
   run_id: string;
   status: string;
   message: string;
+  payload?: Record<string, unknown> | null;
+  created_at?: number | null;
+  updated_at?: number | null;
   result?: Record<string, unknown> | null;
+}
+
+export interface RCAListResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  items: RCAResponse[];
 }

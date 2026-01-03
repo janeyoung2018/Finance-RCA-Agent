@@ -66,7 +66,14 @@ def run_rca(job: RCAJob) -> dict:
         payload=job.__dict__,
     )
     run_store.upsert(record)
-    return {"run_id": record.run_id, "status": record.status, "message": record.message}
+    return {
+        "run_id": record.run_id,
+        "status": record.status,
+        "message": record.message,
+        "payload": record.payload,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
 
 
 async def _execute_rca_run(job: RCAJob, run_id: str) -> None:
@@ -127,7 +134,32 @@ def get_rca_status(run_id: str) -> Optional[dict]:
         "run_id": record.run_id,
         "status": record.status,
         "message": record.message,
+        "payload": record.payload,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
         "result": record.result,
+    }
+
+
+def list_rca_runs(limit: int = 20, offset: int = 0, status: Optional[str] = None) -> dict:
+    runs = run_store.list_runs(limit=limit, offset=offset, status=status)
+    total = run_store.count_runs(status=status)
+    return {
+        "items": [
+            {
+                "run_id": r.run_id,
+                "status": r.status,
+                "message": r.message,
+                "payload": r.payload,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+                "result": r.result,
+            }
+            for r in runs
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
     }
 
 

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { fetchRca, startRca } from "./api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchRca, listRcas, startRca } from "./api";
 import { OPTION_VALUES } from "./optionValues";
 import type { Domains, RCARequest, RCAResponse, Rollup } from "./types";
 
@@ -10,6 +10,7 @@ const DEFAULT_FORM: RCARequest = {
 };
 
 const POLL_INTERVAL_MS = 1500;
+const HISTORY_PAGE_SIZE = 10;
 
 function App() {
   const [form, setForm] = useState<RCARequest>(DEFAULT_FORM);
@@ -17,6 +18,11 @@ function App() {
   const [currentRun, setCurrentRun] = useState<RCAResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
+  const [history, setHistory] = useState<RCAResponse[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyStatus, setHistoryStatus] = useState<string>("");
+  const [historyPage, setHistoryPage] = useState(0);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   const canSubmit = useMemo(() => Boolean(form.month), [form.month]);
   const resultPayload = currentRun?.result as any;
@@ -31,6 +37,25 @@ function App() {
   const filterChips = useMemo(() => buildFilterChips(filterSource), [filterSource]);
   const scopeLabel =
     (resultPayload?.scope as string | undefined) || (resultPayload?.scopes ? "portfolio sweep" : undefined);
+  const comparisonNote = useMemo(() => renderComparisonNote(filterSource), [filterSource]);
+
+  const refreshHistory = useCallback(async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await listRcas({
+        status: historyStatus || undefined,
+        limit: HISTORY_PAGE_SIZE,
+        offset: historyPage * HISTORY_PAGE_SIZE,
+      });
+      setHistory(res.items);
+      setHistoryTotal(res.total);
+    } catch (err) {
+      console.error(err);
+      setError((err as Error).message);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [historyStatus, historyPage]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
@@ -41,6 +66,7 @@ function App() {
           setCurrentRun(res);
           if (res.status === "completed" || res.status === "failed") {
             setPolling(false);
+            refreshHistory();
           }
         } catch (err) {
           console.error(err);
@@ -52,7 +78,11 @@ function App() {
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [polling, currentRun?.run_id]);
+  }, [polling, currentRun?.run_id, refreshHistory]);
+
+  useEffect(() => {
+    refreshHistory();
+  }, [refreshHistory]);
 
   const handleChange = (key: keyof RCARequest) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm((prev) => ({ ...prev, [key]: e.target.value || undefined }));
@@ -70,6 +100,20 @@ function App() {
       setSubmittedForm({ ...form });
       setCurrentRun(res);
       setPolling(true);
+      setHistoryPage(0);
+      refreshHistory();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const handleLoadRun = async (runId: string) => {
+    setError(null);
+    try {
+      const res = await fetchRca(runId);
+      setCurrentRun(res);
+      const payload = res.payload as RCARequest | undefined;
+      if (payload?.month) setSubmittedForm(payload);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -178,6 +222,7 @@ function App() {
             </div>
           </div>
           <p className="message">{currentRun.message}</p>
+          {comparisonNote}
           {currentRun.result && (
             <>
               {renderDecisionSummaries(currentRun.result as any, filterChips, scopeLabel)}
@@ -193,6 +238,90 @@ function App() {
           )}
         </div>
       )}
+
+      <div className="card">
+        <div className="section-header">
+          <div>
+            <h3>Recent Runs</h3>
+            <p className="message">Persisted history powered by the durable run store.</p>
+          </div>
+          <div className="history-controls">
+            <select value={historyStatus} onChange={(e) => setHistoryStatus(e.target.value)}>
+              <option value="">All statuses</option>
+              <option value="queued">Queued</option>
+              <option value="running">Running</option>
+              <option value="synthesizing">Synthesizing</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+            </select>
+            <button type="button" onClick={() => refreshHistory()} disabled={loadingHistory}>
+              {loadingHistory ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+        </div>
+        <div className="history-meta">
+          <span>
+            Showing{" "}
+            {historyTotal === 0
+              ? "0"
+              : `${historyPage * HISTORY_PAGE_SIZE + 1}-${Math.min((historyPage + 1) * HISTORY_PAGE_SIZE, historyTotal)}`}{" "}
+            of {historyTotal}
+          </span>
+          <div className="pager">
+            <button
+              type="button"
+              disabled={historyPage === 0 || loadingHistory}
+              onClick={() => setHistoryPage((p) => Math.max(0, p - 1))}
+            >
+              Prev
+            </button>
+            <button
+              type="button"
+              disabled={(historyPage + 1) * HISTORY_PAGE_SIZE >= historyTotal || loadingHistory}
+              onClick={() => setHistoryPage((p) => p + 1)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+        <div className="table-wrapper">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Status</th>
+                <th>Scope</th>
+                <th>Comparison</th>
+                <th>Updated</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.length === 0 && (
+                <tr>
+                  <td colSpan={6}>{loadingHistory ? "Loading..." : "No runs yet."}</td>
+                </tr>
+              )}
+              {history.map((run) => (
+                <tr key={run.run_id}>
+                  <td className="mono">{run.run_id}</td>
+                  <td>
+                    <span className={`status status-${run.status}`}>{run.status}</span>
+                  </td>
+                  <td>{formatScope(run.payload)}</td>
+                  <td>{formatComparison(run.payload)}</td>
+                  <td>{fmtTime(run.updated_at)}</td>
+                  <td>
+                    <button type="button" onClick={() => handleLoadRun(run.run_id)}>
+                      Load
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -434,6 +563,12 @@ function buildFilterChips(filters?: Record<string, any> | null): FilterChip[] {
   return chips;
 }
 
+function renderComparisonNote(filters?: Record<string, any> | null) {
+  const comparison = (filters as any)?.comparison;
+  if (!comparison || comparison === "plan" || comparison === "prior") return null;
+  return <p className="hint muted">Comparison mode “all” shows plan and prior variances side-by-side.</p>;
+}
+
 function FilterBar({ chips, scopeLabel }: { chips: FilterChip[]; scopeLabel?: string }) {
   if ((!chips || chips.length === 0) && !scopeLabel) return null;
   return (
@@ -465,4 +600,25 @@ function fmt(value: any) {
     return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   }
   return String(value);
+}
+
+function formatScope(payload?: Record<string, any> | null) {
+  if (!payload) return "—";
+  const parts = ["month", "region", "bu", "product_line", "segment", "metric"]
+    .map((key) => (payload as any)[key])
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(" / ") : "full sweep";
+}
+
+function formatComparison(payload?: Record<string, any> | null) {
+  if (!payload || !("comparison" in payload)) return "plan/prior";
+  const value = (payload as any).comparison;
+  if (value === "all") return "plan & prior";
+  return String(value);
+}
+
+function fmtTime(ts?: number | null) {
+  if (!ts) return "—";
+  const date = new Date(ts * 1000);
+  return date.toLocaleString();
 }

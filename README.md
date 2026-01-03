@@ -267,3 +267,4 @@ Located in `frontend/` (Vite + React + TypeScript).
    ```bash
    python scripts/generate_option_values.py
    ```
+6. UI includes persistent run history (powered by the durable run store) with pagination and status filters, plus clearer `comparison="all"` guidance.

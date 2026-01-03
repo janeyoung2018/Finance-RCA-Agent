@@ -75,6 +75,10 @@ button:not(:disabled):active {
   box-shadow: 0 8px 20px rgba(37, 99, 235, 0.3);
 }
 
+.table button, .history-controls button, .pager button {
+  margin-top: 0;
+}
+
 .error {
   color: #b91c1c;
   margin-top: 8px;
@@ -223,5 +227,38 @@ summary {
 }
 
 .brief.muted {
+  color: #64748b;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.history-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.history-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+  color: #475569;
+}
+
+.pager {
+  display: flex;
+  gap: 8px;
+}
+
+.hint.muted {
   color: #64748b;
 }

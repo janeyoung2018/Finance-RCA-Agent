@@ -10,6 +10,7 @@
 - Frontend dropdowns for all filters (including metric), default comparison `all`, and rendering for rollup/domain summaries plus raw JSON.
 - Rollups and decision-support summaries honor the active filters (including metric/comparison), surface scope/filter chips in the UI, and LLM prompts/output are reformatted to avoid markdown bolding.
 - Frontend surfaces rule-based vs LLM decision-support summaries for scopes and sweeps.
+- Frontend now includes persistent run history with pagination/filters and clearer `comparison="all"` context messaging.
 - Gemini-based LLM integration now includes richer response parsing and logging; added live connectivity test (`tests/test_gemini_live.py`) that loads `.env` when available.
 - Option values generated from data via `scripts/generate_option_values.py` -> `frontend/src/optionValues.ts`.
 - README mentions sweep usage and new rollup/domain fields.
@@ -22,4 +23,4 @@
 - Synthesis/challenge are rule-based; no real LLM-driven reasoning.
 - No auth; metrics beyond traces/tokens/cost still minimal.
 - Tests not run in this environment; coverage likely thin.
-- Frontend remains minimal (no run history, pagination, richer UX); `comparison="all"` handling is basic display only.
+- Frontend still lacks richer RCA browsing (run detail deep-links, saved views, advanced comparison toggles) beyond the new history table.

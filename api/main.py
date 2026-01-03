@@ -1,11 +1,11 @@
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from observability.telemetry import init_telemetry
-from src.workflows.rca import RCAJob, enqueue_rca, get_rca_status
+from src.workflows.rca import RCAJob, enqueue_rca, get_rca_status, list_rca_runs
 
 class RCARequest(BaseModel):
     month: str
@@ -22,7 +22,17 @@ class RCAResponse(BaseModel):
     run_id: str
     status: str
     message: str
+    payload: Optional[dict] = None
+    created_at: Optional[float] = None
+    updated_at: Optional[float] = None
     result: Optional[dict] = None
+
+
+class RCAListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[RCAResponse]
 
 
 def create_app() -> FastAPI:
@@ -52,6 +62,13 @@ def create_app() -> FastAPI:
         job = RCAJob(**request.model_dump())
         result = enqueue_rca(job, background_tasks)
         return RCAResponse(**result)
+
+    @app.get("/rca", response_model=RCAListResponse)
+    async def list_runs(
+        status: Optional[str] = None, limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0)
+    ) -> RCAListResponse:
+        data = list_rca_runs(limit=limit, offset=offset, status=status)
+        return RCAListResponse(**data)
 
     @app.get("/rca/{run_id}", response_model=RCAResponse)
     async def fetch_rca(run_id: str) -> RCAResponse:
