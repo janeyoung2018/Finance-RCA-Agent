@@ -12,6 +12,7 @@
 - Frontend surfaces rule-based vs LLM decision-support summaries for scopes and sweeps.
 - Frontend now includes persistent run history with pagination/filters and clearer `comparison="all"` context messaging.
 - Frontend browsing adds shareable run deep-links and comparison view toggles for rollups/history.
+- LLM reasoning endpoint `/llm/query` plus frontend Q&A page that answers questions from stored RCA outputs with deterministic fallback when no LLM key is set.
 - Gemini-based LLM integration now includes richer response parsing and logging; added live connectivity test (`tests/test_gemini_live.py`) that loads `.env` when available.
 - Option values generated from data via `scripts/generate_option_values.py` -> `frontend/src/optionValues.ts`.
 - README mentions sweep usage and new rollup/domain fields.
@@ -23,6 +24,6 @@
 - Coverage configured via pytest-cov (`pytest.ini`) producing terminal and XML reports.
 
 ## Not Implemented / Gaps vs README Vision
-- Synthesis/challenge are rule-based; no real LLM-driven reasoning.
+- Synthesis/challenge remain rule-based; deeper LLM reasoning beyond Q&A is still absent.
 - No auth; metrics beyond traces/tokens/cost still minimal.
 - Frontend still lacks saved presets, multi-run comparisons, and richer drill-downs beyond the improved history and rollup toggles.

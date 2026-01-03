@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from observability.telemetry import init_telemetry
+from src.llm.reasoning import LLMReasoner
+from src.memory.run_store import run_store
 from src.workflows.rca import RCAJob, enqueue_rca, get_rca_status, list_rca_runs
 
 class RCARequest(BaseModel):
@@ -35,6 +37,21 @@ class RCAListResponse(BaseModel):
     items: list[RCAResponse]
 
 
+class LLMQueryRequest(BaseModel):
+    run_id: str
+    question: str
+    scope: Optional[str] = None
+
+
+class LLMQueryResponse(BaseModel):
+    run_id: str
+    question: str
+    answer: str
+    sources: list[str]
+    warnings: list[str] = []
+    llm_used: bool = False
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Finance RCA Agent",
@@ -52,6 +69,7 @@ def create_app() -> FastAPI:
     )
 
     init_telemetry()
+    reasoner = LLMReasoner()
 
     @app.get("/health")
     async def health() -> dict:
@@ -76,6 +94,17 @@ def create_app() -> FastAPI:
         if not result:
             raise HTTPException(status_code=404, detail="run_id not found")
         return RCAResponse(**result)
+
+    @app.post("/llm/query", response_model=LLMQueryResponse)
+    async def llm_query(request: LLMQueryRequest) -> LLMQueryResponse:
+        record = run_store.get(request.run_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="run_id not found")
+        try:
+            result = reasoner.answer(record, request.question, scope=request.scope)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return LLMQueryResponse(question=request.question, **result)
 
     return app
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { fetchRca, listRcas, startRca } from "./api";
+import { fetchRca, listRcas, queryLlm, startRca } from "./api";
 import { OPTION_VALUES } from "./optionValues";
-import type { Comparison, Domains, RCARequest, RCAResponse, Rollup } from "./types";
+import type { Comparison, Domains, LLMQueryResponse, RCARequest, RCAResponse, Rollup } from "./types";
 
 const DEFAULT_FORM: RCARequest = {
   month: "2025-08",
@@ -17,6 +17,7 @@ function App() {
   const [form, setForm] = useState<RCARequest>(DEFAULT_FORM);
   const [submittedForm, setSubmittedForm] = useState<RCARequest | null>(null);
   const [currentRun, setCurrentRun] = useState<RCAResponse | null>(null);
+  const [view, setView] = useState<"rca" | "llm">("rca");
   const [error, setError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const [history, setHistory] = useState<RCAResponse[]>([]);
@@ -26,6 +27,12 @@ function App() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [comparisonView, setComparisonView] = useState<Comparison | "all">("all");
   const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
+  const [qaRunId, setQaRunId] = useState<string>("");
+  const [qaScope, setQaScope] = useState<string>("");
+  const [qaQuestion, setQaQuestion] = useState<string>("");
+  const [qaResponse, setQaResponse] = useState<LLMQueryResponse | null>(null);
+  const [qaLoading, setQaLoading] = useState(false);
+  const [qaError, setQaError] = useState<string | null>(null);
 
   const canSubmit = useMemo(() => Boolean(form.month), [form.month]);
   const resultPayload = currentRun?.result as any;
@@ -161,147 +168,285 @@ function App() {
     }
   };
 
+  const handleAsk = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setQaError(null);
+    setQaResponse(null);
+    const runId = qaRunId.trim();
+    const question = qaQuestion.trim();
+    if (!runId) {
+      setQaError("Select a run to question.");
+      return;
+    }
+    if (!question) {
+      setQaError("Enter a question for the LLM reasoning endpoint.");
+      return;
+    }
+    setQaLoading(true);
+    try {
+      const res = await queryLlm({ run_id: runId, question, scope: qaScope || undefined });
+      setQaResponse(res);
+    } catch (err) {
+      setQaError((err as Error).message);
+    } finally {
+      setQaLoading(false);
+    }
+  };
+
   return (
     <div className="page">
       <header>
         <h1>Finance RCA</h1>
-        <p>Trigger a root cause analysis and watch results update.</p>
+        <p>Trigger a root cause analysis, then interrogate results with optional LLM reasoning.</p>
       </header>
 
-      <form className="card" onSubmit={handleSubmit}>
-        <div className="grid">
-          <label>
-            <span>Month (YYYY-MM)</span>
-            <input value={form.month ?? ""} onChange={handleChange("month")} required placeholder="2025-08" />
-          </label>
-          <label>
-            <span>Region</span>
-            <select value={form.region ?? ""} onChange={handleChange("region")}>
-              <option value="">All (sweep)</option>
-              {OPTION_VALUES.regions.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>BU</span>
-            <select value={form.bu ?? ""} onChange={handleChange("bu")}>
-              <option value="">All (sweep)</option>
-              {OPTION_VALUES.bus.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Product Line</span>
-            <select value={form.product_line ?? ""} onChange={handleChange("product_line")}>
-              <option value="">All (sweep)</option>
-              {OPTION_VALUES.product_lines.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Segment</span>
-            <select value={form.segment ?? ""} onChange={handleChange("segment")}>
-              <option value="">All (sweep)</option>
-              {OPTION_VALUES.segments.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Metric</span>
-            <select value={form.metric ?? ""} onChange={handleChange("metric")}>
-              <option value="">All (sweep)</option>
-              {OPTION_VALUES.metrics.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Comparison</span>
-            <select value={form.comparison ?? "plan"} onChange={handleChange("comparison")}>
-              {OPTION_VALUES.comparisons.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <button type="submit" disabled={!canSubmit}>
-          {polling ? "Running..." : "Start RCA"}
+      <div className="nav-tabs">
+        <button type="button" className={view === "rca" ? "tab active" : "tab"} onClick={() => setView("rca")}>
+          RCA Runner
         </button>
-        <label className="checkbox">
-          <input type="checkbox" checked={form.full_sweep ?? false} onChange={handleToggle("full_sweep")} />
-          <span>Run full-sweep RCA across regions, BUs, product lines, and segments</span>
-        </label>
-        <p className="hint">Leave scope fields blank to sweep all slices for the selected month.</p>
-        {error && <p className="error">{error}</p>}
-      </form>
+        <button type="button" className={view === "llm" ? "tab active" : "tab"} onClick={() => setView("llm")}>
+          LLM Reasoning (Q&A)
+        </button>
+      </div>
 
-      {currentRun && (
-        <div className="card">
-          <div className="status-row">
-            <div>
-              <div className="label">Run ID</div>
-              <div className="value">{currentRun.run_id}</div>
+      {view === "rca" ? (
+        <>
+          <form className="card" onSubmit={handleSubmit}>
+            <div className="grid">
+              <label>
+                <span>Month (YYYY-MM)</span>
+                <input value={form.month ?? ""} onChange={handleChange("month")} required placeholder="2025-08" />
+              </label>
+              <label>
+                <span>Region</span>
+                <select value={form.region ?? ""} onChange={handleChange("region")}>
+                  <option value="">All (sweep)</option>
+                  {OPTION_VALUES.regions.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>BU</span>
+                <select value={form.bu ?? ""} onChange={handleChange("bu")}>
+                  <option value="">All (sweep)</option>
+                  {OPTION_VALUES.bus.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Product Line</span>
+                <select value={form.product_line ?? ""} onChange={handleChange("product_line")}>
+                  <option value="">All (sweep)</option>
+                  {OPTION_VALUES.product_lines.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Segment</span>
+                <select value={form.segment ?? ""} onChange={handleChange("segment")}>
+                  <option value="">All (sweep)</option>
+                  {OPTION_VALUES.segments.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Metric</span>
+                <select value={form.metric ?? ""} onChange={handleChange("metric")}>
+                  <option value="">All (sweep)</option>
+                  {OPTION_VALUES.metrics.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Comparison</span>
+                <select value={form.comparison ?? "plan"} onChange={handleChange("comparison")}>
+                  {OPTION_VALUES.comparisons.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-            <div>
-              <div className="label">Status</div>
-              <div className={`status status-${currentRun.status}`}>{currentRun.status}</div>
-            </div>
-          </div>
-          <div className="action-row">
-            <div className="compare-toggle">
-              <div className="label">Comparison view</div>
-              <div className="pill-toggle">
-                {(["all", "plan", "prior"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    className={comparisonView === mode ? "pill active" : "pill"}
-                    onClick={() => setComparisonView(mode)}
-                  >
-                    {mode === "all" ? "Plan & Prior" : mode === "plan" ? "Plan only" : "Prior only"}
-                  </button>
-                ))}
+            <button type="submit" disabled={!canSubmit}>
+              {polling ? "Running..." : "Start RCA"}
+            </button>
+            <label className="checkbox">
+              <input type="checkbox" checked={form.full_sweep ?? false} onChange={handleToggle("full_sweep")} />
+              <span>Run full-sweep RCA across regions, BUs, product lines, and segments</span>
+            </label>
+            <p className="hint">Leave scope fields blank to sweep all slices for the selected month.</p>
+            {error && <p className="error">{error}</p>}
+          </form>
+
+          {currentRun && (
+            <div className="card">
+              <div className="status-row">
+                <div>
+                  <div className="label">Run ID</div>
+                  <div className="value">{currentRun.run_id}</div>
+                </div>
+                <div>
+                  <div className="label">Status</div>
+                  <div className={`status status-${currentRun.status}`}>{currentRun.status}</div>
+                </div>
               </div>
+              <div className="action-row">
+                <div className="compare-toggle">
+                  <div className="label">Comparison view</div>
+                  <div className="pill-toggle">
+                    {(["all", "plan", "prior"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={comparisonView === mode ? "pill active" : "pill"}
+                        onClick={() => setComparisonView(mode)}
+                      >
+                        {mode === "all" ? "Plan & Prior" : mode === "plan" ? "Plan only" : "Prior only"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="link-actions">
+                  <button type="button" className="ghost-button" onClick={() => handleCopyLink(currentRun.run_id)}>
+                    Copy deep-link
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => {
+                      setQaRunId(currentRun.run_id);
+                      setQaScope(scopeLabel ?? "");
+                      setView("llm");
+                    }}
+                  >
+                    Ask LLM about this run
+                  </button>
+                  {copiedRunId === currentRun.run_id && <span className="hint muted">Link copied</span>}
+                </div>
+              </div>
+              <p className="message">{currentRun.message}</p>
+              {comparisonNote}
+              {currentRun.result && (
+                <>
+                  {renderDecisionSummaries(currentRun.result as any, filterChips, scopeLabel)}
+                  {renderRollup(
+                    (currentRun.result as any).rollup as Rollup | undefined,
+                    filterChips,
+                    scopeLabel,
+                    comparisonView
+                  )}
+                  {renderDomains((currentRun.result as any).domains as Domains | undefined)}
+                </>
+              )}
+              {currentRun.result && (
+                <details open>
+                  <summary>Results</summary>
+                  <pre>{JSON.stringify(currentRun.result, null, 2)}</pre>
+                </details>
+              )}
             </div>
-            <div className="link-actions">
-              <button type="button" className="ghost-button" onClick={() => handleCopyLink(currentRun.run_id)}>
-                Copy deep-link
-              </button>
-              {copiedRunId === currentRun.run_id && <span className="hint muted">Link copied</span>}
-            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="card">
+            <h2>LLM Reasoning (Q&A)</h2>
+            <p className="message">
+              Ask questions against stored RCA summaries. Falls back to deterministic answers when no LLM key is set.
+            </p>
+            <form className="qa-form" onSubmit={handleAsk}>
+              <div className="grid">
+                <label>
+                  <span>Run ID</span>
+                  <input
+                    list="run-options"
+                    value={qaRunId}
+                    onChange={(e) => setQaRunId(e.target.value)}
+                    placeholder="rca-202508-APAC-Growth"
+                  />
+                  <datalist id="run-options">
+                    {history.map((run) => (
+                      <option key={run.run_id} value={run.run_id} />
+                    ))}
+                  </datalist>
+                </label>
+                <label>
+                  <span>Scope (optional)</span>
+                  <input
+                    value={qaScope}
+                    onChange={(e) => setQaScope(e.target.value)}
+                    placeholder="overall or region:APAC"
+                  />
+                </label>
+              </div>
+              <label>
+                <span>Question</span>
+                <textarea
+                  rows={3}
+                  value={qaQuestion}
+                  onChange={(e) => setQaQuestion(e.target.value)}
+                  placeholder="What drove the largest variance in this run?"
+                />
+              </label>
+              <p className="hint muted">
+                Uses stored rollups/summaries only; refuses out-of-scope asks. Completed runs yield the best answers.
+              </p>
+              <div className="action-row">
+                <button type="submit" disabled={qaLoading || !qaRunId || !qaQuestion.trim()}>
+                  {qaLoading ? "Thinking..." : "Ask"}
+                </button>
+                <button type="button" className="ghost-button" onClick={() => refreshHistory()} disabled={loadingHistory}>
+                  {loadingHistory ? "Refreshing..." : "Refresh runs"}
+                </button>
+              </div>
+              {qaError && <p className="error">{qaError}</p>}
+            </form>
           </div>
-          <p className="message">{currentRun.message}</p>
-          {comparisonNote}
-          {currentRun.result && (
-            <>
-              {renderDecisionSummaries(currentRun.result as any, filterChips, scopeLabel)}
-              {renderRollup((currentRun.result as any).rollup as Rollup | undefined, filterChips, scopeLabel, comparisonView)}
-              {renderDomains((currentRun.result as any).domains as Domains | undefined)}
-            </>
+
+          {qaResponse && (
+            <div className="card">
+              <div className="section-header">
+                <div>
+                  <h3>Answer</h3>
+                  <p className="message">
+                    Run {qaResponse.run_id} • {qaResponse.llm_used ? "LLM-powered" : "Deterministic fallback"}
+                  </p>
+                </div>
+                <div className="chips">
+                  {qaResponse.sources.map((s) => (
+                    <span key={s} className="chip chip-ghost">
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {renderDecisionText(qaResponse.answer)}
+              {qaResponse.warnings.length > 0 && (
+                <ul className="warnings">
+                  {qaResponse.warnings.map((w, idx) => (
+                    <li key={idx}>{w}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
-          {currentRun.result && (
-            <details open>
-              <summary>Results</summary>
-              <pre>{JSON.stringify(currentRun.result, null, 2)}</pre>
-            </details>
-          )}
-        </div>
+        </>
       )}
 
       <div className="card">
@@ -376,9 +521,19 @@ function App() {
                   <td>{formatScope(run.payload)}</td>
                   <td>{formatComparison(run.payload)}</td>
                   <td>{fmtTime(run.updated_at)}</td>
-                  <td>
+                  <td className="history-actions">
                     <button type="button" onClick={() => handleLoadRun(run.run_id)}>
                       Load
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => {
+                        setQaRunId(run.run_id);
+                        setView("llm");
+                      }}
+                    >
+                      Ask
                     </button>
                   </td>
                 </tr>

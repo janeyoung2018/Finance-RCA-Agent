@@ -50,6 +50,21 @@ export interface Domains {
   bus?: Record<string, DomainEntry>;
 }
 
+export interface LLMQueryRequest {
+  run_id: string;
+  question: string;
+  scope?: string;
+}
+
+export interface LLMQueryResponse {
+  run_id: string;
+  question: string;
+  answer: string;
+  sources: string[];
+  warnings: string[];
+  llm_used: boolean;
+}
+
 export interface RCAResponse {
   run_id: string;
   status: string;
