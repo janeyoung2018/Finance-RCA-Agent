@@ -1,4 +1,12 @@
-import type { LLMQueryRequest, LLMQueryResponse, RCAListResponse, RCARequest, RCAResponse } from "./types";
+import type {
+  LLMChallengeRequest,
+  LLMChallengeResponse,
+  LLMQueryRequest,
+  LLMQueryResponse,
+  RCAListResponse,
+  RCARequest,
+  RCAResponse,
+} from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -44,6 +52,20 @@ export async function queryLlm(payload: LLMQueryRequest): Promise<LLMQueryRespon
     const detail = await res.json().catch(() => null);
     const msg = (detail && detail.detail) || res.statusText;
     throw new Error(`LLM query failed: ${msg}`);
+  }
+  return res.json();
+}
+
+export async function challengeLlm(payload: LLMChallengeRequest): Promise<LLMChallengeResponse> {
+  const res = await fetch(`${API_BASE}/llm/challenge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    const msg = (detail && detail.detail) || res.statusText;
+    throw new Error(`LLM challenge failed: ${msg}`);
   }
   return res.json();
 }

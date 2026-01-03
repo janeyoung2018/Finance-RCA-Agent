@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { fetchRca, listRcas, queryLlm, startRca } from "./api";
+import { challengeLlm, fetchRca, listRcas, queryLlm, startRca } from "./api";
 import { OPTION_VALUES } from "./optionValues";
-import type { Comparison, Domains, LLMQueryResponse, RCARequest, RCAResponse, Rollup } from "./types";
+import type {
+  Comparison,
+  Domains,
+  LLMChallengeResponse,
+  LLMQueryResponse,
+  RCARequest,
+  RCAResponse,
+  Rollup,
+} from "./types";
 
 const DEFAULT_FORM: RCARequest = {
   month: "2025-08",
@@ -33,6 +41,10 @@ function App() {
   const [qaResponse, setQaResponse] = useState<LLMQueryResponse | null>(null);
   const [qaLoading, setQaLoading] = useState(false);
   const [qaError, setQaError] = useState<string | null>(null);
+  const [qaCompareRunId, setQaCompareRunId] = useState<string>("");
+  const [challengeResponse, setChallengeResponse] = useState<LLMChallengeResponse | null>(null);
+  const [challengeLoading, setChallengeLoading] = useState(false);
+  const [challengeError, setChallengeError] = useState<string | null>(null);
 
   const canSubmit = useMemo(() => Boolean(form.month), [form.month]);
   const resultPayload = currentRun?.result as any;
@@ -172,6 +184,7 @@ function App() {
     e.preventDefault();
     setQaError(null);
     setQaResponse(null);
+    setChallengeResponse(null);
     const runId = qaRunId.trim();
     const question = qaQuestion.trim();
     if (!runId) {
@@ -184,12 +197,36 @@ function App() {
     }
     setQaLoading(true);
     try {
-      const res = await queryLlm({ run_id: runId, question, scope: qaScope || undefined });
+      const res = await queryLlm({
+        run_id: runId,
+        question,
+        scope: qaScope || undefined,
+        compare_run_id: qaCompareRunId.trim() || undefined,
+      });
       setQaResponse(res);
     } catch (err) {
       setQaError((err as Error).message);
     } finally {
       setQaLoading(false);
+    }
+  };
+
+  const handleChallenge = async () => {
+    setChallengeError(null);
+    setChallengeResponse(null);
+    const runId = qaRunId.trim();
+    if (!runId) {
+      setChallengeError("Select a run to challenge.");
+      return;
+    }
+    setChallengeLoading(true);
+    try {
+      const res = await challengeLlm({ run_id: runId, scope: qaScope || undefined });
+      setChallengeResponse(res);
+    } catch (err) {
+      setChallengeError((err as Error).message);
+    } finally {
+      setChallengeLoading(false);
     }
   };
 
@@ -387,6 +424,15 @@ function App() {
                   </datalist>
                 </label>
                 <label>
+                  <span>Compare Run (optional)</span>
+                  <input
+                    list="run-options"
+                    value={qaCompareRunId}
+                    onChange={(e) => setQaCompareRunId(e.target.value)}
+                    placeholder="rca-202508-all-sweep"
+                  />
+                </label>
+                <label>
                   <span>Scope (optional)</span>
                   <input
                     value={qaScope}
@@ -411,11 +457,15 @@ function App() {
                 <button type="submit" disabled={qaLoading || !qaRunId || !qaQuestion.trim()}>
                   {qaLoading ? "Thinking..." : "Ask"}
                 </button>
+                <button type="button" className="ghost-button" onClick={handleChallenge} disabled={challengeLoading || !qaRunId}>
+                  {challengeLoading ? "Challenging..." : "Run challenge"}
+                </button>
                 <button type="button" className="ghost-button" onClick={() => refreshHistory()} disabled={loadingHistory}>
                   {loadingHistory ? "Refreshing..." : "Refresh runs"}
                 </button>
               </div>
               {qaError && <p className="error">{qaError}</p>}
+              {challengeError && <p className="error">{challengeError}</p>}
             </form>
           </div>
 
@@ -427,6 +477,9 @@ function App() {
                   <p className="message">
                     Run {qaResponse.run_id} • {qaResponse.llm_used ? "LLM-powered" : "Deterministic fallback"}
                   </p>
+                  {qaResponse.confidence !== null && qaResponse.confidence !== undefined && (
+                    <p className="hint muted">Confidence: {Math.round((qaResponse.confidence || 0) * 100)}%</p>
+                  )}
                 </div>
                 <div className="chips">
                   {qaResponse.sources.map((s) => (
@@ -437,9 +490,98 @@ function App() {
                 </div>
               </div>
               {renderDecisionText(qaResponse.answer)}
+              {qaResponse.rationale && qaResponse.rationale.length > 0 && (
+                <div className="qa-subsection">
+                  <h4>Rationale</h4>
+                  {qaResponse.rationale.map((line, idx) => (
+                    <p key={idx} className="brief">
+                      - {line}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {qaResponse.next_questions && qaResponse.next_questions.length > 0 && (
+                <div className="qa-subsection">
+                  <h4>Next questions</h4>
+                  {qaResponse.next_questions.map((line, idx) => (
+                    <p key={idx} className="brief">
+                      - {line}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {qaResponse.evidence_refs && qaResponse.evidence_refs.length > 0 && (
+                <div className="qa-subsection">
+                  <h4>Evidence refs</h4>
+                  <ul className="chips">
+                    {qaResponse.evidence_refs.map((ref, idx) => (
+                      <li key={idx} className="chip chip-muted">
+                        {ref}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {qaResponse.warnings.length > 0 && (
                 <ul className="warnings">
                   {qaResponse.warnings.map((w, idx) => (
+                    <li key={idx}>{w}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {challengeResponse && (
+            <div className="card">
+              <div className="section-header">
+                <div>
+                  <h3>Challenge</h3>
+                  <p className="message">{challengeResponse.llm_used ? "LLM-powered" : "Deterministic fallback"}</p>
+                </div>
+                <div className="chips">
+                  {challengeResponse.sources.map((s) => (
+                    <span key={s} className="chip chip-ghost">
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {renderDecisionText(challengeResponse.answer)}
+              {challengeResponse.rationale && challengeResponse.rationale.length > 0 && (
+                <div className="qa-subsection">
+                  <h4>Rationale</h4>
+                  {challengeResponse.rationale.map((line, idx) => (
+                    <p key={idx} className="brief">
+                      - {line}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {challengeResponse.next_questions && challengeResponse.next_questions.length > 0 && (
+                <div className="qa-subsection">
+                  <h4>Next steps</h4>
+                  {challengeResponse.next_questions.map((line, idx) => (
+                    <p key={idx} className="brief">
+                      - {line}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {challengeResponse.evidence_refs && challengeResponse.evidence_refs.length > 0 && (
+                <div className="qa-subsection">
+                  <h4>Evidence refs</h4>
+                  <ul className="chips">
+                    {challengeResponse.evidence_refs.map((ref, idx) => (
+                      <li key={idx} className="chip chip-muted">
+                        {ref}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {challengeResponse.warnings.length > 0 && (
+                <ul className="warnings">
+                  {challengeResponse.warnings.map((w, idx) => (
                     <li key={idx}>{w}</li>
                   ))}
                 </ul>

@@ -41,6 +41,7 @@ class LLMQueryRequest(BaseModel):
     run_id: str
     question: str
     scope: Optional[str] = None
+    compare_run_id: Optional[str] = None
 
 
 class LLMQueryResponse(BaseModel):
@@ -50,6 +51,26 @@ class LLMQueryResponse(BaseModel):
     sources: list[str]
     warnings: list[str] = []
     llm_used: bool = False
+    rationale: list[str] = []
+    next_questions: list[str] = []
+    evidence_refs: list[str] = []
+    confidence: Optional[float] = None
+
+
+class LLMChallengeRequest(BaseModel):
+    run_id: str
+    scope: Optional[str] = None
+
+
+class LLMChallengeResponse(BaseModel):
+    run_id: str
+    answer: str
+    sources: list[str]
+    warnings: list[str] = []
+    llm_used: bool = False
+    rationale: list[str] = []
+    next_questions: list[str] = []
+    evidence_refs: list[str] = []
 
 
 def create_app() -> FastAPI:
@@ -100,11 +121,27 @@ def create_app() -> FastAPI:
         record = run_store.get(request.run_id)
         if not record:
             raise HTTPException(status_code=404, detail="run_id not found")
+        compare_record = None
+        if request.compare_run_id:
+            compare_record = run_store.get(request.compare_run_id)
+            if not compare_record:
+                raise HTTPException(status_code=404, detail="compare_run_id not found")
         try:
-            result = reasoner.answer(record, request.question, scope=request.scope)
+            result = reasoner.answer(record, request.question, scope=request.scope, compare_record=compare_record)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return LLMQueryResponse(question=request.question, **result)
+
+    @app.post("/llm/challenge", response_model=LLMChallengeResponse)
+    async def llm_challenge(request: LLMChallengeRequest) -> LLMChallengeResponse:
+        record = run_store.get(request.run_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="run_id not found")
+        try:
+            result = reasoner.challenge(record, scope=request.scope)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return LLMChallengeResponse(**result)
 
     return app
 

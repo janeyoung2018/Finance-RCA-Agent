@@ -362,3 +362,7 @@ summary {
   color: #b45309;
   padding-left: 18px;
 }
+
+.qa-subsection h4 {
+  margin: 8px 0 4px 0;
+}

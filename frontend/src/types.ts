@@ -54,6 +54,7 @@ export interface LLMQueryRequest {
   run_id: string;
   question: string;
   scope?: string;
+  compare_run_id?: string;
 }
 
 export interface LLMQueryResponse {
@@ -63,6 +64,26 @@ export interface LLMQueryResponse {
   sources: string[];
   warnings: string[];
   llm_used: boolean;
+  rationale?: string[];
+  next_questions?: string[];
+  evidence_refs?: string[];
+  confidence?: number | null;
+}
+
+export interface LLMChallengeRequest {
+  run_id: string;
+  scope?: string;
+}
+
+export interface LLMChallengeResponse {
+  run_id: string;
+  answer: string;
+  sources: string[];
+  warnings: string[];
+  llm_used: boolean;
+  rationale?: string[];
+  next_questions?: string[];
+  evidence_refs?: string[];
 }
 
 export interface RCAResponse {

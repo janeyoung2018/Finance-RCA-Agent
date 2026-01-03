@@ -12,7 +12,8 @@
 - Frontend surfaces rule-based vs LLM decision-support summaries for scopes and sweeps.
 - Frontend now includes persistent run history with pagination/filters and clearer `comparison="all"` context messaging.
 - Frontend browsing adds shareable run deep-links and comparison view toggles for rollups/history.
-- LLM reasoning endpoint `/llm/query` plus frontend Q&A page that answers questions from stored RCA outputs with deterministic fallback when no LLM key is set.
+- LLM reasoning endpoint `/llm/query` plus frontend Q&A page that answers questions from stored RCA outputs; prompt is guardrailed to JSON (answer/rationale/sources/evidence_refs/next questions/confidence) with deterministic fallback when no LLM key is set.
+- LLM challenge endpoint `/llm/challenge` highlights conflicts/blind spots; Q&A supports optional comparison against a second run for delta-aware reasoning.
 - Gemini-based LLM integration now includes richer response parsing and logging; added live connectivity test (`tests/test_gemini_live.py`) that loads `.env` when available.
 - Option values generated from data via `scripts/generate_option_values.py` -> `frontend/src/optionValues.ts`.
 - README mentions sweep usage and new rollup/domain fields.
