@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { fetchRca, listRcas, startRca } from "./api";
 import { OPTION_VALUES } from "./optionValues";
-import type { Domains, RCARequest, RCAResponse, Rollup } from "./types";
+import type { Comparison, Domains, RCARequest, RCAResponse, Rollup } from "./types";
 
 const DEFAULT_FORM: RCARequest = {
   month: "2025-08",
@@ -11,6 +11,7 @@ const DEFAULT_FORM: RCARequest = {
 
 const POLL_INTERVAL_MS = 1500;
 const HISTORY_PAGE_SIZE = 10;
+const RUN_QUERY_KEY = "run";
 
 function App() {
   const [form, setForm] = useState<RCARequest>(DEFAULT_FORM);
@@ -23,6 +24,8 @@ function App() {
   const [historyStatus, setHistoryStatus] = useState<string>("");
   const [historyPage, setHistoryPage] = useState(0);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [comparisonView, setComparisonView] = useState<Comparison | "all">("all");
+  const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
 
   const canSubmit = useMemo(() => Boolean(form.month), [form.month]);
   const resultPayload = currentRun?.result as any;
@@ -84,12 +87,49 @@ function App() {
     refreshHistory();
   }, [refreshHistory]);
 
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const runId = url.searchParams.get(RUN_QUERY_KEY);
+    if (runId) {
+      handleLoadRun(runId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const comparison = (filterSource as any)?.comparison as Comparison | undefined;
+    setComparisonView(comparison ?? "all");
+  }, [filterSource]);
+
   const handleChange = (key: keyof RCARequest) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setForm((prev) => ({ ...prev, [key]: e.target.value || undefined }));
   };
 
   const handleToggle = (key: keyof RCARequest) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((prev) => ({ ...prev, [key]: e.target.checked }));
+  };
+
+  const updateRunQueryParam = (runId?: string) => {
+    const url = new URL(window.location.href);
+    if (runId) {
+      url.searchParams.set(RUN_QUERY_KEY, runId);
+    } else {
+      url.searchParams.delete(RUN_QUERY_KEY);
+    }
+    window.history.replaceState({}, "", url.toString());
+  };
+
+  const handleCopyLink = async (runId: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set(RUN_QUERY_KEY, runId);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setCopiedRunId(runId);
+      setTimeout(() => setCopiedRunId(null), 1600);
+    } catch (err) {
+      console.error(err);
+      setError("Copy failed; you can manually copy the URL.");
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -99,6 +139,7 @@ function App() {
       const res = await startRca(form);
       setSubmittedForm({ ...form });
       setCurrentRun(res);
+      updateRunQueryParam(res.run_id);
       setPolling(true);
       setHistoryPage(0);
       refreshHistory();
@@ -112,6 +153,7 @@ function App() {
     try {
       const res = await fetchRca(runId);
       setCurrentRun(res);
+      updateRunQueryParam(runId);
       const payload = res.payload as RCARequest | undefined;
       if (payload?.month) setSubmittedForm(payload);
     } catch (err) {
@@ -221,12 +263,35 @@ function App() {
               <div className={`status status-${currentRun.status}`}>{currentRun.status}</div>
             </div>
           </div>
+          <div className="action-row">
+            <div className="compare-toggle">
+              <div className="label">Comparison view</div>
+              <div className="pill-toggle">
+                {(["all", "plan", "prior"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={comparisonView === mode ? "pill active" : "pill"}
+                    onClick={() => setComparisonView(mode)}
+                  >
+                    {mode === "all" ? "Plan & Prior" : mode === "plan" ? "Plan only" : "Prior only"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="link-actions">
+              <button type="button" className="ghost-button" onClick={() => handleCopyLink(currentRun.run_id)}>
+                Copy deep-link
+              </button>
+              {copiedRunId === currentRun.run_id && <span className="hint muted">Link copied</span>}
+            </div>
+          </div>
           <p className="message">{currentRun.message}</p>
           {comparisonNote}
           {currentRun.result && (
             <>
               {renderDecisionSummaries(currentRun.result as any, filterChips, scopeLabel)}
-              {renderRollup((currentRun.result as any).rollup as Rollup | undefined, filterChips, scopeLabel)}
+              {renderRollup((currentRun.result as any).rollup as Rollup | undefined, filterChips, scopeLabel, comparisonView)}
               {renderDomains((currentRun.result as any).domains as Domains | undefined)}
             </>
           )}
@@ -328,7 +393,7 @@ function App() {
 
 export default App;
 
-function renderRollup(rollup?: Rollup, filters: FilterChip[] = [], scopeLabel?: string) {
+function renderRollup(rollup?: Rollup, filters: FilterChip[] = [], scopeLabel?: string, comparisonView: Comparison | "all" = "all") {
   if (!rollup) return null;
   const overall = rollup.overall;
   const regions = rollup.regions;
@@ -342,7 +407,7 @@ function renderRollup(rollup?: Rollup, filters: FilterChip[] = [], scopeLabel?: 
       {overall && (
         <div className="rollup-section">
           <h4>Overall</h4>
-          {overall.metrics && <MetricTable metrics={overall.metrics} />}
+          {overall.metrics && <MetricTable metrics={overall.metrics} comparisonView={comparisonView} />}
           {overall.top_regions_by_metric &&
             Object.entries(overall.top_regions_by_metric).map(([metric, rows]) =>
               rows.length ? <TopTable key={`reg-${metric}`} title={`Top Regions (${metric})`} rows={rows} /> : null
@@ -359,7 +424,7 @@ function renderRollup(rollup?: Rollup, filters: FilterChip[] = [], scopeLabel?: 
           {Object.entries(regions).map(([name, data]) => (
             <div key={name} className="rollup-subsection">
               <strong>{name}</strong>
-              {data.metrics && <MetricTable metrics={data.metrics} />}
+              {data.metrics && <MetricTable metrics={data.metrics} comparisonView={comparisonView} />}
               {data.top_bus_by_metric &&
                 Object.entries(data.top_bus_by_metric).map(([metric, rows]) =>
                   rows.length ? <TopTable key={`${name}-bu-${metric}`} title={`Top BUs (${metric})`} rows={rows} /> : null
@@ -374,7 +439,7 @@ function renderRollup(rollup?: Rollup, filters: FilterChip[] = [], scopeLabel?: 
           {Object.entries(bus).map(([name, data]) => (
             <div key={name} className="rollup-subsection">
               <strong>{name}</strong>
-              {data.metrics && <MetricTable metrics={data.metrics} />}
+              {data.metrics && <MetricTable metrics={data.metrics} comparisonView={comparisonView} />}
               {data.top_regions_by_metric &&
                 Object.entries(data.top_regions_by_metric).map(([metric, rows]) =>
                   rows.length ? (
@@ -459,30 +524,35 @@ function renderDecisionSummaries(result: any, filters: FilterChip[] = [], scopeL
   );
 }
 
-function MetricTable({ metrics }: { metrics: Record<string, any> }) {
+function MetricTable({ metrics, comparisonView }: { metrics: Record<string, any>; comparisonView: Comparison | "all" }) {
   const rows = Object.entries(metrics);
   if (rows.length === 0) return null;
+  const showPlan = comparisonView === "plan" || comparisonView === "all";
+  const showPrior = comparisonView === "prior" || comparisonView === "all";
+  type Column = { key: string; label: string; render: (metric: string, values: any) => ReactNode };
+  const columns: Column[] = [
+    { key: "metric", label: "Metric", render: (metric) => metric },
+    { key: "actual", label: "Actual", render: (_, values) => fmt(values.actual) },
+    showPlan ? { key: "plan", label: "Plan", render: (_, values) => fmt(values.plan) } : null,
+    showPrior ? { key: "prior", label: "Prior", render: (_, values) => fmt(values.prior) } : null,
+    showPlan ? { key: "variance_to_plan", label: "Var vs Plan", render: (_, values) => fmt(values.variance_to_plan) } : null,
+    showPrior ? { key: "variance_to_prior", label: "Var vs Prior", render: (_, values) => fmt(values.variance_to_prior) } : null,
+  ].filter(Boolean) as Column[];
   return (
     <table className="table">
       <thead>
         <tr>
-          <th>Metric</th>
-          <th>Actual</th>
-          <th>Plan</th>
-          <th>Prior</th>
-          <th>Var vs Plan</th>
-          <th>Var vs Prior</th>
+          {columns.map((col) => (
+            <th key={col.key}>{col.label}</th>
+          ))}
         </tr>
       </thead>
       <tbody>
         {rows.map(([metric, values]) => (
           <tr key={metric}>
-            <td>{metric}</td>
-            <td>{fmt(values.actual)}</td>
-            <td>{fmt(values.plan)}</td>
-            <td>{fmt(values.prior)}</td>
-            <td>{fmt(values.variance_to_plan)}</td>
-            <td>{fmt(values.variance_to_prior)}</td>
+            {columns.map((col) => (
+              <td key={col.key}>{col.render(metric, values)}</td>
+            ))}
           </tr>
         ))}
       </tbody>

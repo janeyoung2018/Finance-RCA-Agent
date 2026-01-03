@@ -70,6 +70,17 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.ghost-button {
+  background: transparent;
+  color: #0f172a;
+  border: 1px solid #cbd5e1;
+  box-shadow: none;
+}
+
+.ghost-button:not(:disabled):hover {
+  background: #f8fafc;
+}
+
 button:not(:disabled):active {
   transform: translateY(1px);
   box-shadow: 0 8px 20px rgba(37, 99, 235, 0.3);
@@ -135,6 +146,15 @@ summary {
 
 .rollup, .domains {
   margin-top: 16px;
+}
+
+.action-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 8px 0 4px 0;
 }
 
 .section-header {
@@ -261,4 +281,37 @@ summary {
 
 .hint.muted {
   color: #64748b;
+}
+
+.compare-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pill-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #e2e8f0;
+  color: #0f172a;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.pill.active {
+  background: #0ea5e9;
+  border-color: #0ea5e9;
+  color: #fff;
+}
+
+.link-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
