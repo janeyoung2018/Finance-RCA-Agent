@@ -268,3 +268,11 @@ Located in `frontend/` (Vite + React + TypeScript).
    python scripts/generate_option_values.py
    ```
 6. UI includes persistent run history (powered by the durable run store) with pagination and status filters, plus clearer `comparison="all"` guidance.
+
+### CI
+- GitHub Actions workflow (`.github/workflows/ci.yml`) runs compile checks and `pytest` on push/PR.
+
+### Docker
+- Backend: `docker build -t rca-api . && docker run -p 8000:8000 rca-api`
+- Frontend: `docker build -f frontend/Dockerfile -t rca-frontend . && docker run -p 5173:80 rca-frontend`
+- Compose both: `docker-compose up --build` (frontend built with `VITE_API_BASE_URL=http://api:8000`; mounts `./data` into the API).
