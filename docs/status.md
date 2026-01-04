@@ -20,6 +20,7 @@
 - LangGraph-based orchestration for single scopes and full sweeps with progress updates stored in the run store.
 - OpenTelemetry + Phoenix wiring captures RCA runs, per-agent spans, and LLM usage (latency/tokens/cost) with OTLP exporters and optional local Phoenix dashboard.
 - Run store uses durable SQLite storage at `data/run_store.sqlite` to persist run status/results across restarts and supports paginated/status-filtered run listing for the frontend history view.
+- Basic API key auth with in-memory request rate limiting and RCA queue/backpressure limits to prevent overload.
 - GitHub Actions CI runs compile checks and pytest with coverage (xml artifact) on push/PR.
 - Dockerfiles added for API and frontend plus docker-compose for running both.
 - Coverage configured via pytest-cov (`pytest.ini`) producing terminal and XML reports.
@@ -27,5 +28,5 @@
 ## Not Implemented / Gaps vs README Vision
 - Decision support remains heuristic-first: LLM usage is limited to summaries/Q&A/challenge over stored outputs (no tool-using or causal modeling).
 - Data connectors are limited to the bundled CSV dataset; no warehouse adapters or freshness monitoring.
-- No auth or RBAC; operational hardening is light (no rate limiting/backpressure on background jobs).
+- Only basic API key auth plus in-memory rate limiting/backpressure are available; no RBAC or production-grade policy enforcement yet.
 - Frontend still lacks saved presets, side-by-side multi-run comparisons, and deeper drill-down visualizations beyond the current rollups/history toggles.

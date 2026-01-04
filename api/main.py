@@ -1,9 +1,10 @@
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from api.security import rate_limiter, require_api_key
 from observability.telemetry import init_telemetry
 from src.llm.reasoning import LLMReasoner
 from src.memory.run_store import run_store
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
         description="Production-oriented multi-agent system for financial root cause analysis.",
         version="0.1.0",
     )
+    security_dependencies = [Depends(require_api_key), Depends(rate_limiter)]
 
     # Allow local frontend/dev origins; adjust in production.
     app.add_middleware(
@@ -96,27 +98,30 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
-    @app.post("/rca", response_model=RCAResponse)
+    @app.post("/rca", response_model=RCAResponse, dependencies=security_dependencies)
     async def start_rca(request: RCARequest, background_tasks: BackgroundTasks) -> RCAResponse:
         job = RCAJob(**request.model_dump())
-        result = enqueue_rca(job, background_tasks)
+        try:
+            result = enqueue_rca(job, background_tasks)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=429, detail=str(exc))
         return RCAResponse(**result)
 
-    @app.get("/rca", response_model=RCAListResponse)
+    @app.get("/rca", response_model=RCAListResponse, dependencies=security_dependencies)
     async def list_runs(
         status: Optional[str] = None, limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0)
     ) -> RCAListResponse:
         data = list_rca_runs(limit=limit, offset=offset, status=status)
         return RCAListResponse(**data)
 
-    @app.get("/rca/{run_id}", response_model=RCAResponse)
+    @app.get("/rca/{run_id}", response_model=RCAResponse, dependencies=security_dependencies)
     async def fetch_rca(run_id: str) -> RCAResponse:
         result = get_rca_status(run_id)
         if not result:
             raise HTTPException(status_code=404, detail="run_id not found")
         return RCAResponse(**result)
 
-    @app.post("/llm/query", response_model=LLMQueryResponse)
+    @app.post("/llm/query", response_model=LLMQueryResponse, dependencies=security_dependencies)
     async def llm_query(request: LLMQueryRequest) -> LLMQueryResponse:
         record = run_store.get(request.run_id)
         if not record:
@@ -132,7 +137,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc))
         return LLMQueryResponse(question=request.question, **result)
 
-    @app.post("/llm/challenge", response_model=LLMChallengeResponse)
+    @app.post("/llm/challenge", response_model=LLMChallengeResponse, dependencies=security_dependencies)
     async def llm_challenge(request: LLMChallengeRequest) -> LLMChallengeResponse:
         record = run_store.get(request.run_id)
         if not record:

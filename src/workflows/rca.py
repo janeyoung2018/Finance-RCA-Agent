@@ -18,7 +18,7 @@ from src.agents.fx import FXAgent
 from src.agents.shipments import ShipmentsAgent
 from src.agents.supply import SupplyAgent
 from src.agents.synthesis import SynthesisAgent
-from src.config import TOP_CONTRIBUTORS
+from src.config import MAX_CONCURRENT_RUNS, MAX_QUEUED_RUNS, TOP_CONTRIBUTORS
 from src.llm.client import build_llm
 from src.memory.run_store import RunRecord, run_store
 from src.tools.data_loader import DataRepository
@@ -54,8 +54,22 @@ class ScopeState(TypedDict, total=False):
     result: Dict
 
 
+CONCURRENCY_LIMIT = MAX_CONCURRENT_RUNS
+QUEUE_LIMIT = MAX_QUEUED_RUNS
+_concurrency_sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
+
+
+def ensure_queue_capacity() -> None:
+    in_flight = run_store.count_runs(status="queued") + run_store.count_runs(status="running")
+    if in_flight >= QUEUE_LIMIT:
+        raise RuntimeError(
+            f"RCA backlog is full ({in_flight}/{QUEUE_LIMIT}); try again after current runs finish."
+        )
+
+
 def run_rca(job: RCAJob) -> dict:
     """Create a run record and queue LangGraph execution."""
+    ensure_queue_capacity()
     # If user did not select a slice, default to sweeping all slices for the month.
     job.full_sweep = job.full_sweep or _is_unscoped(job)
     run_id = _build_run_id(job)
@@ -78,41 +92,42 @@ def run_rca(job: RCAJob) -> dict:
 
 async def _execute_rca_run(job: RCAJob, run_id: str) -> None:
     """Run RCA progression via LangGraph."""
-    init_telemetry()
-    tracer = get_tracer(__name__)
-    run_store.upsert(
-        RunRecord(
-            run_id=run_id,
-            status="running",
-            message="RCA workflow running via LangGraph.",
-            payload=job.__dict__,
-        )
-    )
-
-    with tracer.start_as_current_span(
-        "rca.run",
-        attributes={"rca.run_id": run_id, "rca.month": job.month, "rca.full_sweep": job.full_sweep},
-    ) as span:
-        try:
-            repo = DataRepository()
-            agents = _init_agents()
-            scope_graph = _build_scope_graph(repo, agents)
-
-            if job.full_sweep:
-                await _run_full_sweep(job, run_id, repo, agents, scope_graph)
-            else:
-                await _run_single_scope(job, run_id, repo, agents, scope_graph, scope_label="selected scope")
-        except Exception as exc:
-            span.record_exception(exc)
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-            run_store.upsert(
-                RunRecord(
-                    run_id=run_id,
-                    status="failed",
-                    message=f"RCA workflow failed: {exc}",
-                    payload=job.__dict__,
-                )
+    async with _concurrency_sem:
+        init_telemetry()
+        tracer = get_tracer(__name__)
+        run_store.upsert(
+            RunRecord(
+                run_id=run_id,
+                status="running",
+                message="RCA workflow running via LangGraph.",
+                payload=job.__dict__,
             )
+        )
+
+        with tracer.start_as_current_span(
+            "rca.run",
+            attributes={"rca.run_id": run_id, "rca.month": job.month, "rca.full_sweep": job.full_sweep},
+        ) as span:
+            try:
+                repo = DataRepository()
+                agents = _init_agents()
+                scope_graph = _build_scope_graph(repo, agents)
+
+                if job.full_sweep:
+                    await _run_full_sweep(job, run_id, repo, agents, scope_graph)
+                else:
+                    await _run_single_scope(job, run_id, repo, agents, scope_graph, scope_label="selected scope")
+            except Exception as exc:
+                span.record_exception(exc)
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                run_store.upsert(
+                    RunRecord(
+                        run_id=run_id,
+                        status="failed",
+                        message=f"RCA workflow failed: {exc}",
+                        payload=job.__dict__,
+                    )
+                )
 
 
 def enqueue_rca(job: RCAJob, background_runner) -> dict:

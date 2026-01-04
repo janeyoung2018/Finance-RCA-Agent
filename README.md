@@ -37,12 +37,18 @@ The system analyzes **Actual vs Plan vs Prior** performance, identifies what cha
 - GitHub Actions CI runs compile checks and pytest with coverage (XML artifact) on push/PR.
 - Dockerfiles for API and frontend plus docker-compose for running both together.
 
+### Security & hardening
+- Optional API key guard on all non-health endpoints via `API_KEY` and `X-API-Key` header.
+- In-memory request throttling per client (`RATE_LIMIT_REQUESTS` per `RATE_LIMIT_WINDOW_SECONDS`); 429 responses on bursts.
+- RCA queue/backpressure limits (`MAX_QUEUED_RUNS`, `MAX_CONCURRENT_RUNS`) to avoid unbounded background jobs; excess requests return 429.
+- See `docs/security.md` for configuration details and ops guidance.
+
 ---
 
 ## Gaps vs Vision
 - Decision support is heuristic-first: LLM use is limited to summaries/Q&A/challenge over stored outputs (no causal modeling or tool-driven what-ifs).
 - Data connectors are limited to the bundled CSV dataset; no warehouse adapters or freshness monitoring.
-- No auth or RBAC; operational hardening is light (no rate limiting/backpressure on background jobs).
+- Only basic API key auth plus in-memory rate limiting/backpressure are available; no RBAC or production-grade policy enforcement yet.
 - Frontend lacks saved presets, side-by-side multi-run comparisons, and deeper drill-down visualizations beyond the current rollups/history toggles.
 
 ---
@@ -119,25 +125,28 @@ The `data/` folder contains a synthetic financial/operational dataset with plant
    ```bash
    uvicorn api.main:app --reload
    ```
-3. Health check:
+3. Health check (health endpoint is unauthenticated):
    ```bash
    curl http://127.0.0.1:8000/health
    ```
+   If you set `API_KEY`, include `-H "X-API-Key: $API_KEY"` on all other requests.
 4. Start an RCA (defaults to `comparison="all"`):
    ```bash
    curl -X POST http://127.0.0.1:8000/rca \
      -H "Content-Type: application/json" \
+     -H "X-API-Key: $API_KEY" \
      -d '{"month":"2025-08","region":"APAC","bu":"Growth"}'
    ```
    Full sweep across regions/BUs/product_lines/segments/metrics:
    ```bash
    curl -X POST http://127.0.0.1:8000/rca \
      -H "Content-Type: application/json" \
+     -H "X-API-Key: $API_KEY" \
      -d '{"month":"2025-08","full_sweep":true}'
    ```
 5. Poll run status/results:
    ```bash
-   curl http://127.0.0.1:8000/rca/rca-202508-APAC-Growth
+   curl -H "X-API-Key: $API_KEY" http://127.0.0.1:8000/rca/rca-202508-APAC-Growth
    ```
    Full-sweep runs return IDs like `rca-202508-all-sweep` and include:
    - `rollup`: month-level finance metrics vs plan/prior with top region/BU contributors
@@ -145,7 +154,7 @@ The `data/` folder contains a synthetic financial/operational dataset with plant
    - `domains`: dominant demand/supply/pricing/fx/cost drivers per region and BU
 6. List runs (powers the frontend history view) with optional status/limit/offset filters:
    ```bash
-   curl "http://127.0.0.1:8000/rca?status=completed&limit=10&offset=0"
+   curl -H "X-API-Key: $API_KEY" "http://127.0.0.1:8000/rca?status=completed&limit=10&offset=0"
    ```
 
 ### LLM decision support (optional)
