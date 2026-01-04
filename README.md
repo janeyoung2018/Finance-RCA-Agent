@@ -22,26 +22,28 @@ The system analyzes **Actual vs Plan vs Prior** performance, identifies what cha
 - Synthesis produces stakeholder-friendly briefs and sweep hotspot summaries.
 - Dual summaries for scopes and sweeps: rule-based reference plus LLM decision-support output with deterministic fallback when no key is set.
 - LLM integration (Gemini or OpenAI) with richer response parsing, logging, and a live connectivity test.
-- LLM reasoning endpoint `/llm/query` answers questions from stored RCA outputs; `/llm/challenge` highlights conflicts/blind spots and supports delta-aware comparisons across runs.
+- LLM reasoning endpoints `/llm/query` and `/llm/challenge` answer or challenge stored RCA outputs with JSON guardrails (answer/rationale/sources/evidence_refs/next questions/confidence), deterministic fallback when no LLM key is set, and optional compare-run support for delta-aware responses.
 
 ### Frontend
 - Vite + React UI renders rollup/domain summaries, raw JSON, and scope/filter chips with default `comparison="all"`.
 - Dropdowns cover all filters (including metric) with option values generated from data via `scripts/generate_option_values.py`.
 - Persistent run history with pagination/filters, clearer `comparison="all"` messaging, shareable run deep-links, and comparison view toggles.
 - Frontend surfaces rule-based vs LLM decision-support summaries for scopes and sweeps.
+- LLM Reasoning tab lets you ask or challenge runs (with optional scope/compare run) and shows whether answers came from an LLM or deterministic fallback.
 
 ### Observability & ops
 - OpenTelemetry + Phoenix wiring captures RCA runs, per-agent spans, and LLM usage (latency/tokens/cost) with OTLP exporters and optional local Phoenix dashboard.
-- Run store persists to `data/run_store.sqlite` so background jobs survive API restarts (override with `RUN_STORE_PATH` as needed).
+- Run store persists to `data/run_store.sqlite` (override with `RUN_STORE_PATH`) so background jobs survive API restarts and backs paginated/status-filtered run listing for the history view.
 - GitHub Actions CI runs compile checks and pytest with coverage (XML artifact) on push/PR.
 - Dockerfiles for API and frontend plus docker-compose for running both together.
 
 ---
 
 ## Gaps vs Vision
-- Synthesis/challenge are still rule-based; deeper LLM reasoning beyond Q&A is not yet implemented.
-- No auth; metrics beyond traces/tokens/cost remain limited.
-- Frontend lacks saved presets, multi-run comparisons, and richer drill-downs beyond the improved history and rollup toggles.
+- Decision support is heuristic-first: LLM use is limited to summaries/Q&A/challenge over stored outputs (no causal modeling or tool-driven what-ifs).
+- Data connectors are limited to the bundled CSV dataset; no warehouse adapters or freshness monitoring.
+- No auth or RBAC; operational hardening is light (no rate limiting/backpressure on background jobs).
+- Frontend lacks saved presets, side-by-side multi-run comparisons, and deeper drill-down visualizations beyond the current rollups/history toggles.
 
 ---
 
@@ -141,6 +143,10 @@ The `data/` folder contains a synthetic financial/operational dataset with plant
    - `rollup`: month-level finance metrics vs plan/prior with top region/BU contributors
    - `portfolio`: sweep summary across scopes
    - `domains`: dominant demand/supply/pricing/fx/cost drivers per region and BU
+6. List runs (powers the frontend history view) with optional status/limit/offset filters:
+   ```bash
+   curl "http://127.0.0.1:8000/rca?status=completed&limit=10&offset=0"
+   ```
 
 ### LLM decision support (optional)
 - Prefer Gemini free tier: set `GOOGLE_API_KEY` (default model `gemini-1.5-flash`).
