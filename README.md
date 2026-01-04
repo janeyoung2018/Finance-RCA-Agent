@@ -1,202 +1,104 @@
 # Finance-RCA-Agent
-An agent for financial root cause analyses
-# Multi-Agent Financial Root Cause Analysis (RCA) System
+Multi-agent financial root cause analysis (RCA) system that pairs deterministic analytics with LLM decision support.
 
 ## Overview
 
-This project is a **production-oriented multi-agent system** for performing **monthly financial root cause analysis (RCA)**.
+This project is a production-oriented monthly RCA workflow. The goal is to demonstrate how **LLM-powered agents** collaborate with traditional rule-based analyses to deliver accurate financial variance results, surface stakeholder-ready insights, and let humans run RCA and Q&A in plain language with human-in-the-loop control.
 
-The system analyzes **Actual vs Plan vs Prior** performance, identifies **what changed**, explains **why it changed**, and attributes impact across:
-- Regions
-- Business Units
-- Product Lines
-- Customer Segments
--  
-
-The goal is **not** to build a BI dashboard or chatbot, but to demonstrate how **LLM-powered agents** can collaborate, reason over structured data, retain context over time, and produce **auditable, explainable analyses** with **human-in-the-loop control**.
+The system analyzes **Actual vs Plan vs Prior** performance, identifies what changed, explains why, and attributes impact across regions, business units, product lines, and customer segments.
 
 ---
 
-## Project Goals
+## Current Capabilities
 
-This repository is a **reference implementation** focused on real-world agent system concerns:
+### RCA pipeline
+- End-to-end RCA API with background workflow, specialist agents (finance, demand, supply, shipments, FX, events), and a durable SQLite-backed run store.
+- LangGraph-based orchestration for single-scope and full-sweep runs with progress persisted per run.
+- Finance rollups overall, by region, and by BU with per-metric contributors vs plan and prior; supports `comparison="all"`.
+- Domain breakdowns surface dominant demand/supply/pricing/fx/cost drivers per region and BU.
+- Full-sweep mode runs all slices (regions/BUs/product_lines/segments/metrics) when unscoped or `full_sweep=true` and returns per-scope syntheses plus a portfolio summary.
 
-- Multi-agent orchestration (parallel, sequential, looped agents)
-- Tool-augmented reasoning over structured data
-- Long-running workflows with pause/resume
-- Session and state management
-- **Short-term and long-term memory**
-- Context engineering and compaction
-- Observability (logging, tracing, metrics)
-- Agent evaluation and regression testing
-- Human-in-the-loop (HITL) review and approval
-- Cloud-ready, containerized deployment
+### Decision support & LLM usage
+- Synthesis produces stakeholder-friendly briefs and sweep hotspot summaries.
+- Dual summaries for scopes and sweeps: rule-based reference plus LLM decision-support output with deterministic fallback when no key is set.
+- LLM integration (Gemini or OpenAI) with richer response parsing, logging, and a live connectivity test.
+- LLM reasoning endpoint `/llm/query` answers questions from stored RCA outputs; `/llm/challenge` highlights conflicts/blind spots and supports delta-aware comparisons across runs.
 
-The emphasis is **system reliability and design**, not prompt engineering.
+### Frontend
+- Vite + React UI renders rollup/domain summaries, raw JSON, and scope/filter chips with default `comparison="all"`.
+- Dropdowns cover all filters (including metric) with option values generated from data via `scripts/generate_option_values.py`.
+- Persistent run history with pagination/filters, clearer `comparison="all"` messaging, shareable run deep-links, and comparison view toggles.
+- Frontend surfaces rule-based vs LLM decision-support summaries for scopes and sweeps.
+
+### Observability & ops
+- OpenTelemetry + Phoenix wiring captures RCA runs, per-agent spans, and LLM usage (latency/tokens/cost) with OTLP exporters and optional local Phoenix dashboard.
+- Run store persists to `data/run_store.sqlite` so background jobs survive API restarts (override with `RUN_STORE_PATH` as needed).
+- GitHub Actions CI runs compile checks and pytest with coverage (XML artifact) on push/PR.
+- Dockerfiles for API and frontend plus docker-compose for running both together.
 
 ---
 
-## High-Level Workflow
+## Gaps vs Vision
+- Synthesis/challenge are still rule-based; deeper LLM reasoning beyond Q&A is not yet implemented.
+- No auth; metrics beyond traces/tokens/cost remain limited.
+- Frontend lacks saved presets, multi-run comparisons, and richer drill-downs beyond the improved history and rollup toggles.
 
-1. **User requests an RCA**
-   - Example:  
-     *“Why did APAC revenue miss plan in Aug 2025?”*
+---
 
-2. **Orchestrator Agent**
-   - Defines scope (month, comparison baseline)
-   - Loads relevant memory
-   - Creates an investigation plan
-   - Spawns specialist agents
+## RCA Flow
 
-3. **Specialist Agents (parallel)**
-   - Finance Variance Agent
-   - Demand Agent
-   - Supply Chain Agent
-   - Pricing / FX Agent
-   - Anomaly Detection Agent
-
-4. **Synthesis Agent**
-   - Aggregates findings
-   - Ranks root causes by quantified impact
-   - Generates a draft narrative with evidence
-
-5. **Challenge Agent (loop)**
-   - Tests alternative explanations
-   - Detects conflicting signals
-   - Requests additional analysis if needed
-
-6. **Human-in-the-Loop Gate**
-   - Review, edit, approve, or request drill-downs
-   - System resumes after feedback
-
-7. **Final RCA Report**
-   - Executive summary
-   - Ranked drivers with evidence
-   - Assumptions and uncertainty
-   - Actionable follow-ups
+1. **Request an RCA** (e.g., “Why did APAC revenue miss plan in Aug 2025?”).
+2. **Orchestrator agent** scopes the month/baseline, loads memory, and spawns specialist agents.
+3. **Specialist agents** run finance variance, demand, supply/shipments, pricing/FX, and anomaly/event analysis.
+4. **Synthesis** aggregates findings, ranks root causes, and drafts stakeholder-ready briefs (rule-based with optional LLM decision support).
+5. **Challenge loop** tests alternative explanations, flags conflicts/blind spots, and can request more analysis.
+6. **Human-in-the-loop** review gates approval, edits, or drill-down requests; workflows resume afterward.
+7. **Final RCA output** includes executive-style summaries, ranked drivers with evidence, assumptions/uncertainty, and follow-ups.
 
 ---
 
 ## Memory Model
 
-Memory is a **first-class component** of the system.
+Memory is a first-class component of the system.
 
-### 1. Session Memory (Short-Term)
+### Session Memory (short-term)
+- Tracks scope, intermediate tool outputs, agent findings/confidence, drafts, and HITL feedback within a single RCA run.
+- Supports pause/resume, avoids recomputation, and keeps steps auditable.
 
-Used **within a single RCA run**.
+### Long-Term Memory (cross-session)
+- Stores recurring patterns, validated explanations, reviewer corrections, and known data quality issues to improve future analyses.
+- Retrieved selectively and compacted before entering prompts to keep runs cost-efficient and deterministic.
 
-Stores:
-- Scope (month, baseline, filters)
-- Intermediate tool outputs
-- Agent findings and confidence scores
-- Draft narratives and revisions
-- Human feedback and decisions
-
-Purpose:
-- Enable pause/resume
-- Avoid recomputation
-- Maintain traceability across agent steps
-
-Typical implementations:
-- In-memory (development)
-- Redis or database-backed (production)
+### Context Engineering
+- Raw tables stay out of prompts; only aggregates, summaries, and evidence references are injected.
+- Memory is compacted into short, decision-relevant snippets to maintain traceability.
 
 ---
 
-### 2. Long-Term Memory (Cross-Session)
+## Dataset (example only)
 
-Used **across multiple RCA runs** to improve analysis quality over time.
-
-Stores:
-- Recurring seasonal patterns by region or BU
-- Known structural drivers (e.g., recurring supply constraints)
-- Previously validated RCA explanations
-- Human reviewer corrections and preferences
-- Known data quality issues
-
-Purpose:
-- Reduce repeated false hypotheses
-- Improve consistency across months
-- Incorporate human judgment into future analyses
-
-Memory is retrieved **selectively** and injected into agent context in compact form.
-
----
-
-### 3. Context Engineering
-
-Because RCA sessions can grow large:
-- Raw tables are never placed directly into prompts
-- Only aggregates, summaries, and evidence references are included
-- Memory is compacted into short, decision-relevant snippets
-
-This keeps agents:
-- Cost-efficient
-- Deterministic
-- Auditable
-
-### Run Store Persistence
-
-- Run status/results are persisted to SQLite at `data/run_store.sqlite` so background jobs survive API restarts.
-- Override the path with `RUN_STORE_PATH=/custom/location/run_store.sqlite` if deploying outside this repo layout.
-
----
-
-## Dataset (Example Only)
-
-This repository includes a **synthetic financial and operational dataset** in the `data/` folder.
-
-The dataset:
-- Is fully synthetic and safe to share
-- Mimics real enterprise finance and operations data
-- Contains planted RCA scenarios (supply delays, promotions, FX swings, churn)
-
-The dataset exists solely to **exercise the system design**.  
-The architecture is **data-source agnostic** and can be adapted to real data warehouses or APIs.
+The `data/` folder contains a synthetic financial/operational dataset with planted scenarios (supply delays, promotions, FX swings, churn) to exercise the system design. The architecture is data-source agnostic and can be pointed at real warehouses or APIs.
 
 ---
 
 ## Tools & Technologies
 
-### Core Stack
-- **Python**
-- **LangGraph (LangChain)** for agent orchestration
-- **Pydantic** for contracts and state
-- **FastAPI** (or CLI) for execution
-- **Docker / containers** for deployment
-
-### Tooling Concepts Demonstrated
-- Custom analytical tools (variance decomposition, anomaly detection)
-- CSV-backed “warehouse-like” query tools
-- OpenAPI tools (e.g., ticketing or CRM — optional)
-- MCP-style tool discovery (optional)
-- Code execution tools for validation and chart generation
+- Python, LangGraph (LangChain), Pydantic, FastAPI/CLI
+- Custom analytical tools (variance decomposition, anomaly detection), CSV-backed query tools
+- Optional OpenAPI/MCP-style tool discovery and code execution for validation/charting
+- Docker/containerized deployment
 
 ---
 
-## Observability
+## Repository Structure
 
-The system is instrumented for:
-- Structured logging
-- Distributed tracing
-- Cost and latency metrics
-- Evidence coverage metrics
-- HITL escalation and rejection rates
-
-Observability is treated as **part of correctness**, not an afterthought.
-
----
-
-## Repository Structure (scaffold)
-
-Current layout with intended roles:
-- `src/agents` — orchestrator, specialist agents, and synthesis/challenge loops.
-- `src/tools` — analytical tools (variance decomposition, anomaly detection, charting, CSV/SQL loaders).
-- `src/memory` — session + long-term stores, compaction utilities, and retrieval logic.
+- `src/agents` — orchestrator, specialist agents, synthesis/challenge loops.
+- `src/tools` — analytical tools (variance, anomaly detection, charting, CSV/SQL loaders).
+- `src/memory` — session + long-term stores, compaction utilities, retrieval logic.
 - `src/workflows` — LangGraph/LangChain graphs and orchestration definitions.
 - `src/schemas` — Pydantic contracts for state, tool IO, and HITL payloads.
 - `api/` — FastAPI or CLI entrypoints, routing, auth hooks.
-- `config/` — environment settings, data paths, and routing config (add `.env.example` here).
+- `config/` — environment settings, data paths, routing config.
 - `observability/` — logging, tracing, metrics config.
 - `docs/` — architecture notes, runbooks, HITL/observability guides.
 - `tests/` — unit/integration/e2e tests and planted-scenario evaluations.
@@ -205,7 +107,7 @@ Current layout with intended roles:
 
 ---
 
-## Getting Started (FastAPI)
+## Getting Started (FastAPI API)
 
 1. Install dependencies:
    ```bash
@@ -215,45 +117,42 @@ Current layout with intended roles:
    ```bash
    uvicorn api.main:app --reload
    ```
-3. Check health:
+3. Health check:
    ```bash
    curl http://127.0.0.1:8000/health
    ```
-4. Start an RCA (defaults to comparison="all"):
+4. Start an RCA (defaults to `comparison="all"`):
    ```bash
-   curl -X POST http://127.0.0.1:8000/rca \\
-     -H "Content-Type: application/json" \\
+   curl -X POST http://127.0.0.1:8000/rca \
+     -H "Content-Type: application/json" \
      -d '{"month":"2025-08","region":"APAC","bu":"Growth"}'
    ```
-   To sweep all regions/BUs/product lines/segments for the month and aggregate results, add `full_sweep:true` (or omit scope filters entirely to default to a sweep):
+   Full sweep across regions/BUs/product_lines/segments/metrics:
    ```bash
-   curl -X POST http://127.0.0.1:8000/rca \\
-     -H "Content-Type: application/json" \\
+   curl -X POST http://127.0.0.1:8000/rca \
+     -H "Content-Type: application/json" \
      -d '{"month":"2025-08","full_sweep":true}'
    ```
-5. Poll run status and results:
+5. Poll run status/results:
    ```bash
    curl http://127.0.0.1:8000/rca/rca-202508-APAC-Growth
    ```
-   Full-sweep requests return run IDs like `rca-202508-all-sweep`.
-   Full-sweep results now include:
-   - `rollup`: month-level finance metrics vs plan and prior with top region/BU contributors
+   Full-sweep runs return IDs like `rca-202508-all-sweep` and include:
+   - `rollup`: month-level finance metrics vs plan/prior with top region/BU contributors
    - `portfolio`: sweep summary across scopes
    - `domains`: dominant demand/supply/pricing/fx/cost drivers per region and BU
 
-### Tests
-```bash
-pytest
-```
-
-### LLM Decision-Support (optional)
-- Prefer Gemini free tier: set `GOOGLE_API_KEY` (default model `gemini-1.5-flash`).  
-- Alternatively, set `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL`) to use OpenAI chat models.
+### LLM decision support (optional)
+- Prefer Gemini free tier: set `GOOGLE_API_KEY` (default model `gemini-1.5-flash`).
+- Or set `OPENAI_API_KEY` (and optionally `OPENAI_BASE_URL`) to use OpenAI chat models.
 - Optional envs: `LLM_MODEL`, `LLM_MAX_TOKENS` (default `256`), `LLM_TEMPERATURE` (default `0.2`).
+- Use `/llm/query` for natural-language Q&A over stored RCA outputs and `/llm/challenge` for conflict/blind-spot checks (both fall back to deterministic responses without keys).
 
-### React Frontend
+### React frontend
+
 Located in `frontend/` (Vite + React + TypeScript).
-1. Install deps (from `frontend/`):
+
+1. Install deps:
    ```bash
    npm install
    ```
@@ -262,15 +161,19 @@ Located in `frontend/` (Vite + React + TypeScript).
    npm run dev
    ```
 3. Open the URL printed by Vite (default http://localhost:5173) and trigger RCA runs.
-4. To point at a different API base URL, set `VITE_API_BASE_URL` in `frontend/.env` (defaults to `http://127.0.0.1:8000`).
-5. Dropdown option values for region/BU/product line/segment/metric/comparison are generated from the data via:
+4. Point to a different API base URL with `VITE_API_BASE_URL` in `frontend/.env` (defaults to `http://127.0.0.1:8000`).
+5. Regenerate dropdown values:
    ```bash
    python scripts/generate_option_values.py
    ```
-6. UI includes persistent run history (powered by the durable run store) with pagination and status filters, plus clearer `comparison="all"` guidance.
+
+### Tests
+```bash
+pytest
+```
 
 ### CI
-- GitHub Actions workflow (`.github/workflows/ci.yml`) runs compile checks and `pytest` with coverage on push/PR and uploads `coverage.xml`.
+- GitHub Actions workflow (`.github/workflows/ci.yml`) runs compile checks and pytest with coverage (XML artifact) on push/PR.
 
 ### Docker
 - Backend: `docker build -t rca-api . && docker run -p 8000:8000 rca-api`
