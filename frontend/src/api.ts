@@ -9,11 +9,16 @@ import type {
 } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_KEY = import.meta.env.VITE_API_KEY as string | undefined;
+
+function authHeaders(): HeadersInit {
+  return API_KEY ? { "X-API-Key": API_KEY } : {};
+}
 
 export async function startRca(payload: RCARequest): Promise<RCAResponse> {
   const res = await fetch(`${API_BASE}/rca`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -23,7 +28,9 @@ export async function startRca(payload: RCARequest): Promise<RCAResponse> {
 }
 
 export async function fetchRca(runId: string): Promise<RCAResponse> {
-  const res = await fetch(`${API_BASE}/rca/${runId}`);
+  const res = await fetch(`${API_BASE}/rca/${runId}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     throw new Error(`Failed to fetch RCA: ${res.statusText}`);
   }
@@ -35,7 +42,9 @@ export async function listRcas(params?: { status?: string; limit?: number; offse
   if (params?.status) query.set("status", params.status);
   if (params?.limit) query.set("limit", String(params.limit));
   if (params?.offset) query.set("offset", String(params.offset));
-  const res = await fetch(`${API_BASE}/rca?${query.toString()}`);
+  const res = await fetch(`${API_BASE}/rca?${query.toString()}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     throw new Error(`Failed to list RCAs: ${res.statusText}`);
   }
@@ -45,7 +54,7 @@ export async function listRcas(params?: { status?: string; limit?: number; offse
 export async function queryLlm(payload: LLMQueryRequest): Promise<LLMQueryResponse> {
   const res = await fetch(`${API_BASE}/llm/query`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -59,7 +68,7 @@ export async function queryLlm(payload: LLMQueryRequest): Promise<LLMQueryRespon
 export async function challengeLlm(payload: LLMChallengeRequest): Promise<LLMChallengeResponse> {
   const res = await fetch(`${API_BASE}/llm/challenge`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
