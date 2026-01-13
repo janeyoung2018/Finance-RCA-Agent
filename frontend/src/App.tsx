@@ -25,7 +25,7 @@ function App() {
   const [form, setForm] = useState<RCARequest>(DEFAULT_FORM);
   const [submittedForm, setSubmittedForm] = useState<RCARequest | null>(null);
   const [currentRun, setCurrentRun] = useState<RCAResponse | null>(null);
-  const [view, setView] = useState<"rca" | "llm">("rca");
+  const [view, setView] = useState<"rca" | "llm" | "causal">("rca");
   const [error, setError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
   const [history, setHistory] = useState<RCAResponse[]>([]);
@@ -230,6 +230,37 @@ function App() {
     }
   };
 
+  const reasoningConfig = useMemo(() => {
+    if (view === "causal") {
+        return {
+          title: "Causal Reasoning",
+          description:
+          "Explore counterfactuals and causal-style questions using stored RCA outputs. Use 'top N scopes' for ranked scope results.",
+          quickQuestions: [
+            "If FX were flat, revenue miss would be X% smaller",
+            "Top 5 scopes by impact if FX were flat",
+            "If demand were flat, how would the revenue variance change?",
+            "If supply constraints were removed, what portion of the miss remains?",
+          ],
+          placeholder: "If FX were flat, revenue miss would be X% smaller",
+          showChallenge: false,
+        };
+    }
+    return {
+      title: "LLM Reasoning (Q&A)",
+      description:
+        "Ask questions against stored RCA summaries. Use 'top N scopes' for ranked scope results. Falls back to deterministic answers when no LLM key is set.",
+      quickQuestions: [
+        "What drove the largest variance in this run?",
+        "Top 5 scopes by impact if FX were flat",
+        "If FX were flat, revenue miss would be X% smaller",
+        "Which region and BU explain most of the revenue variance?",
+      ],
+      placeholder: "What drove the largest variance in this run?",
+      showChallenge: true,
+    };
+  }, [view]);
+
   return (
     <div className="page">
       <header>
@@ -243,6 +274,9 @@ function App() {
         </button>
         <button type="button" className={view === "llm" ? "tab active" : "tab"} onClick={() => setView("llm")}>
           LLM Reasoning (Q&A)
+        </button>
+        <button type="button" className={view === "causal" ? "tab active" : "tab"} onClick={() => setView("causal")}>
+          Causal Reasoning
         </button>
       </div>
 
@@ -374,6 +408,17 @@ function App() {
                   >
                     Ask LLM about this run
                   </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => {
+                      setQaRunId(currentRun.run_id);
+                      setQaScope(scopeLabel ?? "");
+                      setView("causal");
+                    }}
+                  >
+                    Causal reasoning
+                  </button>
                   {copiedRunId === currentRun.run_id && <span className="hint muted">Link copied</span>}
                 </div>
               </div>
@@ -403,10 +448,8 @@ function App() {
       ) : (
         <>
           <div className="card">
-            <h2>LLM Reasoning (Q&A)</h2>
-            <p className="message">
-              Ask questions against stored RCA summaries. Falls back to deterministic answers when no LLM key is set.
-            </p>
+            <h2>{reasoningConfig.title}</h2>
+            <p className="message">{reasoningConfig.description}</p>
             <form className="qa-form" onSubmit={handleAsk}>
               <div className="grid">
                 <label>
@@ -447,9 +490,21 @@ function App() {
                   rows={3}
                   value={qaQuestion}
                   onChange={(e) => setQaQuestion(e.target.value)}
-                  placeholder="What drove the largest variance in this run?"
+                  placeholder={reasoningConfig.placeholder}
                 />
               </label>
+              <div className="chips">
+                {reasoningConfig.quickQuestions.map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    className="chip chip-muted"
+                    onClick={() => setQaQuestion(q)}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
               <p className="hint muted">
                 Uses stored rollups/summaries only; refuses out-of-scope asks. Completed runs yield the best answers.
               </p>
@@ -457,15 +512,22 @@ function App() {
                 <button type="submit" disabled={qaLoading || !qaRunId || !qaQuestion.trim()}>
                   {qaLoading ? "Thinking..." : "Ask"}
                 </button>
-                <button type="button" className="ghost-button" onClick={handleChallenge} disabled={challengeLoading || !qaRunId}>
-                  {challengeLoading ? "Challenging..." : "Run challenge"}
-                </button>
+                {reasoningConfig.showChallenge && (
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={handleChallenge}
+                    disabled={challengeLoading || !qaRunId}
+                  >
+                    {challengeLoading ? "Challenging..." : "Run challenge"}
+                  </button>
+                )}
                 <button type="button" className="ghost-button" onClick={() => refreshHistory()} disabled={loadingHistory}>
                   {loadingHistory ? "Refreshing..." : "Refresh runs"}
                 </button>
               </div>
               {qaError && <p className="error">{qaError}</p>}
-              {challengeError && <p className="error">{challengeError}</p>}
+              {reasoningConfig.showChallenge && challengeError && <p className="error">{challengeError}</p>}
             </form>
           </div>
 
@@ -531,7 +593,7 @@ function App() {
               )}
             </div>
           )}
-          {challengeResponse && (
+          {reasoningConfig.showChallenge && challengeResponse && (
             <div className="card">
               <div className="section-header">
                 <div>

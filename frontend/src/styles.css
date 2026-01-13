@@ -254,6 +254,15 @@ summary {
   color: #0f172a;
 }
 
+button.chip {
+  border: none;
+  cursor: pointer;
+}
+
+button.chip:hover {
+  background: #cbd5f5;
+}
+
 .chip-ghost {
   background: #e0f2fe;
   color: #075985;

@@ -29,4 +29,8 @@ class ShipmentsAgent:
                 }
             )
 
-        return {"summary": summary, "signals": signals}
+        return {
+            "summary": summary,
+            "signals": signals,
+            "metrics": {"avg_fulfillment": avg_fulfillment, "shipped_units": total_shipped},
+        }

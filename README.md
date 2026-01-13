@@ -23,6 +23,8 @@ The system analyzes **Actual vs Plan vs Prior** performance, identifies what cha
 - Dual summaries for scopes and sweeps: rule-based reference plus LLM decision-support output with deterministic fallback when no key is set.
 - LLM integration (Gemini or OpenAI) with richer response parsing, logging, and a live connectivity test.
 - LLM reasoning endpoints `/llm/query` and `/llm/challenge` answer or challenge stored RCA outputs with JSON guardrails (answer/rationale/sources/evidence_refs/next questions/confidence), deterministic fallback when no LLM key is set, and optional compare-run support for delta-aware responses.
+- Casual reasoning is treated as a first-class component: a lightweight, human-style explanation layer that explores hypotheses and uncertainty without replacing deterministic evidence.
+- Deterministic counterfactuals support FX, demand, supply/fulfillment, and pricing/discount scenarios (with low-confidence heuristics); multi-scope requests return top-N scopes by impact.
 
 ### Frontend
 - Vite + React UI renders rollup/domain summaries, raw JSON, and scope/filter chips with default `comparison="all"`.
@@ -59,9 +61,10 @@ The system analyzes **Actual vs Plan vs Prior** performance, identifies what cha
 2. **Orchestrator agent** scopes the month/baseline, loads memory, and spawns specialist agents.
 3. **Specialist agents** run finance variance, demand, supply/shipments, pricing/FX, and anomaly/event analysis.
 4. **Synthesis** aggregates findings, ranks root causes, and drafts stakeholder-ready briefs (rule-based with optional LLM decision support).
-5. **Challenge loop** tests alternative explanations, flags conflicts/blind spots, and can request more analysis.
-6. **Human-in-the-loop** review gates approval, edits, or drill-down requests; workflows resume afterward.
-7. **Final RCA output** includes executive-style summaries, ranked drivers with evidence, assumptions/uncertainty, and follow-ups.
+5. **Casual reasoning layer** provides a low-stakes, human-style narrative to explore hypotheses, assumptions, and uncertainty before finalizing the write-up.
+6. **Challenge loop** tests alternative explanations, flags conflicts/blind spots, and can request more analysis.
+7. **Human-in-the-loop** review gates approval, edits, or drill-down requests; workflows resume afterward.
+8. **Final RCA output** includes executive-style summaries, ranked drivers with evidence, assumptions/uncertainty, and follow-ups.
 
 ---
 

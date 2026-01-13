@@ -8,6 +8,7 @@ configured or a call fails.
 
 import json
 import logging
+import re
 from typing import Callable, Dict, List, Optional, Tuple
 
 from src.llm.client import build_llm
@@ -43,11 +44,18 @@ class LLMReasoner:
         if not context_sections:
             raise ValueError("No usable context found for this run.")
 
+        counterfactual = self._counterfactual_answer(record.result, question, scope)
         prompt = self._build_prompt(question, context_sections, record.run_id, compare_record.run_id if compare_record else None)
         llm_used = False
         parsed = None
 
-        if self.llm:
+        if counterfactual:
+            answer_text = counterfactual["answer"]
+            rationale = counterfactual.get("rationale", [])
+            next_questions = []
+            evidence_refs = counterfactual.get("evidence_refs", sources)
+            confidence = counterfactual.get("confidence")
+        elif self.llm:
             try:
                 llm_output = self.llm(prompt)
                 if llm_output:
@@ -69,7 +77,7 @@ class LLMReasoner:
             next_questions = parsed.get("next_questions") or []
             evidence_refs = parsed.get("evidence_refs") or sources
             confidence = parsed.get("confidence")
-        else:
+        elif not counterfactual:
             answer_text = self._fallback_answer(question, context_sections)
             rationale = []
             next_questions = []
@@ -87,6 +95,314 @@ class LLMReasoner:
             "evidence_refs": evidence_refs,
             "confidence": confidence,
         }
+
+    def _counterfactual_answer(self, result: Dict, question: str, scope: Optional[str]) -> Optional[Dict]:
+        if not self._is_counterfactual_question(question):
+            return None
+        question_lower = question.lower()
+        if not scope and result.get("scopes") and self._is_multi_scope_request(question_lower):
+            return self._multi_scope_counterfactual(result, question_lower)
+        payload = self._select_scope_payload(result, scope)
+        if not payload:
+            return None
+        estimate = self._counterfactual_for_payload(payload, question_lower)
+        if estimate:
+            return estimate
+        return self._unsupported_counterfactual(
+            "Counterfactual is not supported for this run; required metrics are missing.",
+            ["No deterministic impact model is stored for this scope."],
+        )
+
+    def _is_counterfactual_question(self, question: str) -> bool:
+        question_lower = question.lower()
+        triggers = ("if ", "were ", "would ", "without ", "remove ", "removed ", "flat")
+        return any(t in question_lower for t in triggers)
+
+    def _is_multi_scope_request(self, question_lower: str) -> bool:
+        triggers = (
+            "per-scope",
+            "by scope",
+            "each scope",
+            "across scopes",
+            "all scopes",
+            "by region",
+            "by bu",
+            "for each scope",
+            "for each region",
+            "for each bu",
+        )
+        return any(t in question_lower for t in triggers)
+
+    def _counterfactual_for_payload(self, payload: Dict, question_lower: str) -> Optional[Dict]:
+        if "fx" in question_lower and "flat" in question_lower:
+            return self._estimate_fx_flat_impact(payload)
+        if "demand" in question_lower:
+            return self._estimate_demand_flat_impact(payload)
+        if "supply" in question_lower or "shipment" in question_lower or "fulfillment" in question_lower:
+            return self._estimate_fulfillment_flat_impact(payload)
+        if "pricing" in question_lower or "discount" in question_lower or "asp" in question_lower or "price" in question_lower:
+            return self._estimate_pricing_flat_impact(payload, question_lower)
+        return None
+
+    def _multi_scope_counterfactual(self, result: Dict, question_lower: str) -> Dict:
+        scopes = result.get("scopes") or {}
+        rows: List[Tuple[float, str]] = []
+        limit = self._extract_top_n(question_lower, default=5, max_value=10)
+        for label, payload in scopes.items():
+            estimate = self._counterfactual_for_payload(payload or {}, question_lower)
+            if estimate and estimate.get("answer"):
+                score = float(estimate.get("_impact_score") or 0)
+                rows.append((score, f"{label}: {estimate['answer']}"))
+            else:
+                rows.append((0.0, f"{label}: counterfactual not supported for this scope."))
+        rows.sort(key=lambda item: item[0], reverse=True)
+        lines = [row[1] for row in rows[:limit]]
+        remaining = max(0, len(rows) - limit)
+        if remaining:
+            lines.append(f"...and {remaining} more scopes.")
+        return {
+            "answer": "\n".join(lines),
+            "rationale": ["Computed per-scope using scope-level rollups where available."],
+            "evidence_refs": ["scopes"],
+            "confidence": 0.2,
+        }
+
+    def _extract_top_n(self, question_lower: str, default: int = 5, max_value: int = 10) -> int:
+        match = re.search(r"top\\s+(\\d+)", question_lower)
+        if not match:
+            return default
+        try:
+            value = int(match.group(1))
+        except Exception:
+            return default
+        if value < 1:
+            return default
+        return min(value, max_value)
+
+    def _select_scope_payload(self, result: Dict, scope: Optional[str]) -> Optional[Dict]:
+        if scope and result.get("scopes"):
+            payload = result["scopes"].get(scope)
+            if payload:
+                return payload
+        return result
+
+    def _estimate_fx_flat_impact(self, payload: Dict) -> Optional[Dict]:
+        fx = payload.get("fx") or {}
+        rollup = payload.get("rollup") or {}
+        baseline = self._baseline_revenue(rollup)
+        if not baseline:
+            return None
+        actual, baseline_value, baseline_label = baseline
+
+        avg_fx_pct = self._weighted_fx_pct_change(fx, rollup)
+        if avg_fx_pct is None or (1 + avg_fx_pct) == 0:
+            return None
+
+        actual_fx_flat = actual / (1 + avg_fx_pct)
+        return self._format_counterfactual_answer(
+            "FX flat",
+            actual,
+            actual_fx_flat,
+            baseline_value,
+            baseline_label,
+            [
+                f"Avg FX change vs prior estimated at {avg_fx_pct * 100:.2f}%.",
+                "Assumes FX impact scales linearly with reported revenue.",
+            ],
+            ["fx:signals", "rollup:overall:revenue"],
+            0.35,
+        )
+
+    def _estimate_demand_flat_impact(self, payload: Dict) -> Optional[Dict]:
+        demand = payload.get("demand") or {}
+        metrics = demand.get("metrics") or {}
+        current_orders = metrics.get("orders")
+        prior_orders = metrics.get("prior_orders")
+        if not current_orders or not prior_orders:
+            return None
+        baseline = self._baseline_revenue(payload.get("rollup") or {})
+        if not baseline:
+            return None
+        actual, baseline_value, baseline_label = baseline
+        order_ratio = prior_orders / current_orders
+        actual_demand_flat = actual * order_ratio
+        rationale = [
+            f"Orders current {current_orders:,.0f} vs prior {prior_orders:,.0f}.",
+            "Assumes revenue scales linearly with order volume.",
+        ]
+        return self._format_counterfactual_answer(
+            "Demand flat (orders)",
+            actual,
+            actual_demand_flat,
+            baseline_value,
+            baseline_label,
+            rationale,
+            ["demand:metrics", "rollup:overall:revenue"],
+            0.25,
+        )
+
+    def _estimate_fulfillment_flat_impact(self, payload: Dict) -> Optional[Dict]:
+        shipments = payload.get("shipments") or {}
+        metrics = shipments.get("metrics") or {}
+        avg_fulfillment = metrics.get("avg_fulfillment")
+        if avg_fulfillment is None or avg_fulfillment == 0:
+            return None
+        baseline = self._baseline_revenue(payload.get("rollup") or {})
+        if not baseline:
+            return None
+        actual, baseline_value, baseline_label = baseline
+        actual_fulfillment_flat = actual / avg_fulfillment
+        rationale = [
+            f"Avg fulfillment rate {avg_fulfillment:.2f}.",
+            "Assumes revenue scales linearly with fulfillment rate.",
+        ]
+        return self._format_counterfactual_answer(
+            "Supply constraints removed (fulfillment 1.0)",
+            actual,
+            actual_fulfillment_flat,
+            baseline_value,
+            baseline_label,
+            rationale,
+            ["shipments:metrics", "rollup:overall:revenue"],
+            0.2,
+        )
+
+    def _estimate_pricing_flat_impact(self, payload: Dict, question_lower: str) -> Optional[Dict]:
+        demand = payload.get("demand") or {}
+        metrics = demand.get("metrics") or {}
+        current_asp = metrics.get("asp")
+        prior_asp = metrics.get("prior_asp")
+        current_discount = metrics.get("avg_discount")
+        prior_discount = metrics.get("prior_avg_discount")
+        baseline = self._baseline_revenue(payload.get("rollup") or {})
+        if not baseline:
+            return None
+        actual, baseline_value, baseline_label = baseline
+
+        if "discount" in question_lower and current_discount is not None and prior_discount is not None:
+            if (1 - current_discount) == 0:
+                return None
+            price_ratio = (1 - prior_discount) / (1 - current_discount)
+            actual_price_flat = actual * price_ratio
+            rationale = [
+                f"Avg discount current {current_discount:.2f} vs prior {prior_discount:.2f}.",
+                "Assumes revenue scales linearly with net price.",
+            ]
+            return self._format_counterfactual_answer(
+                "Discount flat (net price to prior)",
+                actual,
+                actual_price_flat,
+                baseline_value,
+                baseline_label,
+                rationale,
+                ["demand:metrics", "rollup:overall:revenue"],
+                0.2,
+            )
+
+        if current_asp is None or prior_asp is None or current_asp == 0:
+            return None
+        price_ratio = prior_asp / current_asp
+        actual_price_flat = actual * price_ratio
+        rationale = [
+            f"ASP current {current_asp:,.0f} vs prior {prior_asp:,.0f}.",
+            "Assumes revenue scales linearly with ASP.",
+        ]
+        return self._format_counterfactual_answer(
+            "ASP flat (price to prior)",
+            actual,
+            actual_price_flat,
+            baseline_value,
+            baseline_label,
+            rationale,
+            ["demand:metrics", "rollup:overall:revenue"],
+            0.2,
+        )
+
+    def _baseline_revenue(self, rollup: Dict) -> Optional[Tuple[float, float, str]]:
+        overall_metrics = (rollup.get("overall") or {}).get("metrics") or {}
+        revenue = overall_metrics.get("revenue") or {}
+        actual = revenue.get("actual")
+        plan = revenue.get("plan")
+        prior = revenue.get("prior")
+        if actual is None:
+            return None
+        baseline_label = "plan" if plan is not None else "prior"
+        baseline_value = plan if plan is not None else prior
+        if baseline_value is None:
+            return None
+        return float(actual), float(baseline_value), baseline_label
+
+    def _format_counterfactual_answer(
+        self,
+        label: str,
+        actual: float,
+        actual_counterfactual: float,
+        baseline_value: float,
+        baseline_label: str,
+        rationale: List[str],
+        evidence_refs: List[str],
+        confidence: float,
+    ) -> Optional[Dict]:
+        orig_variance = actual - baseline_value
+        cf_variance = actual_counterfactual - baseline_value
+        if orig_variance == 0:
+            return None
+        reduction_pct = (abs(orig_variance) - abs(cf_variance)) / abs(orig_variance) * 100
+        miss_word = "miss" if orig_variance < 0 else "beat"
+        impact_phrase = f"{abs(reduction_pct):.1f}% smaller" if reduction_pct >= 0 else f"{abs(reduction_pct):.1f}% larger"
+        answer = (
+            f"If {label} held constant, the revenue {miss_word} vs {baseline_label} "
+            f"would be {impact_phrase}. Original variance: {orig_variance:,.0f}; "
+            f"Counterfactual variance: {cf_variance:,.0f}."
+        )
+        impact_score = abs(abs(orig_variance) - abs(cf_variance))
+        return {
+            "answer": answer,
+            "rationale": rationale,
+            "evidence_refs": evidence_refs,
+            "confidence": confidence,
+            "_impact_score": impact_score,
+        }
+
+    def _unsupported_counterfactual(self, answer: str, rationale: List[str]) -> Dict:
+        return {
+            "answer": answer,
+            "rationale": rationale,
+            "evidence_refs": ["counterfactual:unsupported"],
+            "confidence": 0.1,
+        }
+
+    def _weighted_fx_pct_change(self, fx: Dict, rollup: Dict) -> Optional[float]:
+        signals = fx.get("signals") or []
+        if not signals:
+            return None
+        by_region: Dict[str, List[float]] = {}
+        for signal in signals:
+            prior = signal.get("prior")
+            delta = signal.get("delta")
+            region = signal.get("region")
+            if prior in (None, 0) or delta is None:
+                continue
+            pct = delta / prior
+            if region:
+                by_region.setdefault(region, []).append(pct)
+        if not by_region:
+            return None
+
+        region_metrics = (rollup.get("regions") or {})
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for region, pct_values in by_region.items():
+            avg_pct = sum(pct_values) / len(pct_values)
+            region_revenue = (
+                ((region_metrics.get(region) or {}).get("metrics") or {}).get("revenue") or {}
+            ).get("actual")
+            weight = float(region_revenue) if region_revenue not in (None, 0) else 1.0
+            weighted_sum += avg_pct * weight
+            total_weight += weight
+        if total_weight == 0:
+            return None
+        return weighted_sum / total_weight
 
     def challenge(self, record: RunRecord, scope: Optional[str] = None) -> Dict:
         """
