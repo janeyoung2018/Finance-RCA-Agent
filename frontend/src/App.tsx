@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { challengeLlm, fetchRca, listRcas, queryLlm, startRca } from "./api";
+import { challengeLlm, fetchRca, listRcas, queryCausal, queryLlm, startRca } from "./api";
 import { OPTION_VALUES } from "./optionValues";
 import type {
   Comparison,
@@ -197,7 +197,8 @@ function App() {
     }
     setQaLoading(true);
     try {
-      const res = await queryLlm({
+      const queryFn = view === "causal" ? queryCausal : queryLlm;
+      const res = await queryFn({
         run_id: runId,
         question,
         scope: qaScope || undefined,
@@ -566,6 +567,16 @@ function App() {
                 <div className="qa-subsection">
                   <h4>Next questions</h4>
                   {qaResponse.next_questions.map((line, idx) => (
+                    <p key={idx} className="brief">
+                      - {line}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {qaResponse.uncertainty_notes && qaResponse.uncertainty_notes.length > 0 && (
+                <div className="qa-subsection">
+                  <h4>Uncertainty notes</h4>
+                  {qaResponse.uncertainty_notes.map((line, idx) => (
                     <p key={idx} className="brief">
                       - {line}
                     </p>

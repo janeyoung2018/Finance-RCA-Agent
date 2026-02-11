@@ -68,6 +68,7 @@ export interface LLMQueryResponse {
   next_questions?: string[];
   evidence_refs?: string[];
   confidence?: number | null;
+  uncertainty_notes?: string[];
 }
 
 export interface LLMChallengeRequest {

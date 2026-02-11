@@ -96,6 +96,64 @@ class LLMReasoner:
             "confidence": confidence,
         }
 
+    def causal_answer(
+        self,
+        record: RunRecord,
+        question: str,
+        scope: Optional[str] = None,
+        compare_record: Optional[RunRecord] = None,
+    ) -> Dict:
+        if not record.result:
+            raise ValueError("Run has no stored result yet.")
+
+        warnings: List[str] = []
+        if record.status != "completed":
+            warnings.append(f"Run is {record.status}; results may be partial.")
+        if compare_record:
+            warnings.append("Comparison run is ignored for causal reasoning.")
+
+        payload = self._select_scope_payload(record.result, scope)
+        if not payload:
+            raise ValueError("No usable context found for this run.")
+
+        scope_label = payload.get("scope") or scope or "selected scope"
+        outcome_line, evidence_refs = self._build_causal_outcome(payload)
+        driver_lines, driver_refs = self._build_causal_drivers(payload)
+        counterfactual_lines, counterfactual_refs = self._build_causal_counterfactuals(payload)
+        uncertainty_notes = self._build_uncertainty_notes(payload, bool(driver_lines), bool(counterfactual_lines))
+
+        answer_lines = [outcome_line]
+        if driver_lines:
+            answer_lines.append("Drivers:")
+            answer_lines.extend([f"- {line}" for line in driver_lines])
+        if counterfactual_lines:
+            answer_lines.append("Counterfactual checks:")
+            answer_lines.extend([f"- {line}" for line in counterfactual_lines])
+
+        sources = [f"scope:{scope_label}"]
+        evidence_refs.extend(driver_refs)
+        evidence_refs.extend(counterfactual_refs)
+        evidence_refs = sorted(set(evidence_refs))
+
+        rationale = [
+            "Drivers are inferred from domain signals and finance contributors; relationships are correlational.",
+            "Counterfactuals assume linear scaling and hold other factors constant.",
+        ]
+        confidence = self._score_causal_confidence(payload, bool(driver_lines), bool(counterfactual_lines))
+
+        return {
+            "run_id": record.run_id,
+            "answer": "\n".join(answer_lines),
+            "sources": sources,
+            "warnings": warnings,
+            "llm_used": False,
+            "rationale": rationale,
+            "next_questions": [],
+            "evidence_refs": evidence_refs,
+            "confidence": confidence,
+            "uncertainty_notes": uncertainty_notes,
+        }
+
     def _counterfactual_answer(self, result: Dict, question: str, scope: Optional[str]) -> Optional[Dict]:
         if not self._is_counterfactual_question(question):
             return None
@@ -594,6 +652,180 @@ class LLMReasoner:
                 f"{metric}: variance {variance} (plan {values.get('plan')}, prior {values.get('prior')}, actual {values.get('actual')})"
             )
         return lines
+
+    def _build_causal_outcome(self, payload: Dict) -> Tuple[str, List[str]]:
+        rollup = payload.get("rollup") or {}
+        outcome = self._top_variance_metric(rollup)
+        if not outcome:
+            return "Outcome: no rollup variance data found for this scope.", ["rollup:missing"]
+        metric = outcome["metric"]
+        variance = outcome["variance"]
+        baseline_label = outcome["baseline_label"]
+        actual = outcome["actual"]
+        baseline_value = outcome["baseline_value"]
+        miss_word = "miss" if variance < 0 else "beat"
+        line = (
+            f"Outcome: {metric} {miss_word} vs {baseline_label} by {variance:,.0f} "
+            f"(actual {actual:,.0f}, {baseline_label} {baseline_value:,.0f})."
+        )
+        return line, [f"rollup:overall:{metric}"]
+
+    def _top_variance_metric(self, rollup: Dict) -> Optional[Dict]:
+        overall = (rollup.get("overall") or {}).get("metrics") or {}
+        if not overall:
+            return None
+
+        preferred = ["revenue", "gross_margin", "profit"]
+        metrics = list(overall.keys())
+        ordered = preferred + [m for m in metrics if m not in preferred]
+        best = None
+        for metric in ordered:
+            values = overall.get(metric)
+            if not values:
+                continue
+            var_plan = values.get("variance_to_plan")
+            var_prior = values.get("variance_to_prior")
+            if var_plan is None and var_prior is None:
+                continue
+            if var_plan is not None and var_prior is not None:
+                baseline_label = "plan" if abs(var_plan) >= abs(var_prior) else "prior"
+            else:
+                baseline_label = "plan" if var_plan is not None else "prior"
+            variance = var_plan if baseline_label == "plan" else var_prior
+            actual = values.get("actual")
+            baseline_value = values.get(baseline_label)
+            if actual is None or baseline_value is None or variance is None:
+                continue
+            candidate = {
+                "metric": metric,
+                "variance": float(variance),
+                "baseline_label": baseline_label,
+                "actual": float(actual),
+                "baseline_value": float(baseline_value),
+            }
+            if not best or abs(candidate["variance"]) > abs(best["variance"]):
+                best = candidate
+        return best
+
+    def _build_causal_drivers(self, payload: Dict) -> Tuple[List[str], List[str]]:
+        lines: List[str] = []
+        refs: List[str] = []
+
+        finance = payload.get("finance") or {}
+        contributors = finance.get("top_contributors") or []
+        if contributors:
+            top_parts = []
+            for entry in contributors[:2]:
+                metric = entry.get("metric") or "metric"
+                variance = entry.get("variance", 0)
+                region = entry.get("region")
+                bu = entry.get("bu")
+                scope_bits = [b for b in [region, bu] if b]
+                scope_label = f" ({', '.join(scope_bits)})" if scope_bits else ""
+                top_parts.append(f"{metric} {variance:,.0f}{scope_label}")
+            lines.append(f"Finance contributors: {'; '.join(top_parts)}.")
+            refs.append("finance:top_contributors")
+        elif finance.get("summary"):
+            lines.append(f"Finance summary: {finance.get('summary')}")
+            refs.append("finance:summary")
+
+        domain_sections = [
+            ("Demand", payload.get("demand") or {}, "demand:signals"),
+            ("Supply", payload.get("supply") or {}, "supply:signals"),
+            ("Shipments", payload.get("shipments") or {}, "shipments:signals"),
+            ("FX", payload.get("fx") or {}, "fx:signals"),
+        ]
+        for label, section, ref in domain_sections:
+            summary = self._format_signal_summary(label, section.get("signals") or [])
+            if summary:
+                lines.append(summary)
+                refs.append(ref)
+
+        events = payload.get("events") or {}
+        event_lines = self._format_event_summary(events.get("events") or [])
+        if event_lines:
+            lines.append(event_lines)
+            refs.append("events:log")
+
+        return lines, refs
+
+    def _build_causal_counterfactuals(self, payload: Dict) -> Tuple[List[str], List[str]]:
+        lines: List[str] = []
+        refs: List[str] = []
+        estimates = [
+            self._estimate_fx_flat_impact(payload),
+            self._estimate_demand_flat_impact(payload),
+            self._estimate_fulfillment_flat_impact(payload),
+            self._estimate_pricing_flat_impact(payload, "pricing"),
+        ]
+        for estimate in estimates:
+            if not estimate:
+                continue
+            answer = estimate.get("answer")
+            evidence = estimate.get("evidence_refs") or []
+            if answer:
+                lines.append(answer)
+                refs.extend(evidence)
+        return lines, refs
+
+    def _format_signal_summary(self, label: str, signals: List[Dict], limit: int = 3) -> Optional[str]:
+        if not signals:
+            return None
+        counts: Dict[str, int] = {}
+        for signal in signals:
+            kind = signal.get("type", "unknown")
+            counts[kind] = counts.get(kind, 0) + 1
+        top = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:limit]
+        formatted = ", ".join([f"{name} x{count}" for name, count in top])
+        return f"{label} signals: {formatted}."
+
+    def _format_event_summary(self, events: List[Dict], limit: int = 3) -> Optional[str]:
+        if not events:
+            return None
+        counts: Dict[str, int] = {}
+        for event in events:
+            kind = event.get("type", "unknown")
+            counts[kind] = counts.get(kind, 0) + 1
+        top = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:limit]
+        formatted = ", ".join([f"{name} x{count}" for name, count in top])
+        return f"Events: {formatted}."
+
+    def _score_causal_confidence(self, payload: Dict, has_drivers: bool, has_counterfactuals: bool) -> float:
+        score = 0.15
+        if self._top_variance_metric(payload.get("rollup") or {}):
+            score += 0.15
+        if has_drivers:
+            score += 0.15
+        if has_counterfactuals:
+            score += 0.1
+        if (payload.get("demand") or {}).get("signals"):
+            score += 0.05
+        if (payload.get("supply") or {}).get("signals"):
+            score += 0.05
+        if (payload.get("shipments") or {}).get("signals"):
+            score += 0.05
+        if (payload.get("fx") or {}).get("signals"):
+            score += 0.05
+        return min(score, 0.6)
+
+    def _build_uncertainty_notes(self, payload: Dict, has_drivers: bool, has_counterfactuals: bool) -> List[str]:
+        notes: List[str] = []
+        rollup = payload.get("rollup") or {}
+        if not self._top_variance_metric(rollup):
+            notes.append("No rollup variance metric available; outcome may be incomplete.")
+        if not has_drivers:
+            notes.append("Driver signals are sparse; causal links are tentative.")
+        if not has_counterfactuals:
+            notes.append("Counterfactual checks not available for this scope.")
+        if not (payload.get("demand") or {}).get("signals"):
+            notes.append("Demand signals missing.")
+        if not (payload.get("supply") or {}).get("signals"):
+            notes.append("Supply signals missing.")
+        if not (payload.get("shipments") or {}).get("signals"):
+            notes.append("Shipment signals missing.")
+        if not (payload.get("fx") or {}).get("signals"):
+            notes.append("FX signals missing.")
+        return notes
 
     def _parse_structured_answer(self, text: str) -> Optional[Dict]:
         """

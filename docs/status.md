@@ -15,8 +15,10 @@
 - Frontend now includes persistent run history with pagination/filters and clearer `comparison="all"` context messaging.
 - Frontend browsing adds shareable run deep-links and comparison view toggles for rollups/history.
 - LLM reasoning endpoint `/llm/query` plus frontend Q&A page that answers questions from stored RCA outputs; prompt is guardrailed to JSON (answer/rationale/sources/evidence_refs/next questions/confidence) with deterministic fallback when no LLM key is set.
+- Deterministic causal reasoning endpoint `/llm/causal` returns outcome, drivers, and counterfactual checks grounded in stored rollups/signals with explicit assumptions, confidence, and uncertainty notes.
 - LLM challenge endpoint `/llm/challenge` highlights conflicts/blind spots; Q&A supports optional comparison against a second run for delta-aware reasoning.
 - Gemini-based LLM integration now includes richer response parsing and logging; added live connectivity test (`tests/test_gemini_live.py`) that loads `.env` when available.
+- Causal reasoning layer links drivers to outcomes with explicit counterfactual assumptions, confidence levels, and caveats to keep explanations evidence-tied.
 - Option values generated from data via `scripts/generate_option_values.py` -> `frontend/src/optionValues.ts`.
 - README mentions sweep usage and new rollup/domain fields.
 - LangGraph-based orchestration for single scopes and full sweeps with progress updates stored in the run store.

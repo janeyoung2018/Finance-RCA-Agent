@@ -65,6 +65,20 @@ export async function queryLlm(payload: LLMQueryRequest): Promise<LLMQueryRespon
   return res.json();
 }
 
+export async function queryCausal(payload: LLMQueryRequest): Promise<LLMQueryResponse> {
+  const res = await fetch(`${API_BASE}/llm/causal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    const msg = (detail && detail.detail) || res.statusText;
+    throw new Error(`Causal query failed: ${msg}`);
+  }
+  return res.json();
+}
+
 export async function challengeLlm(payload: LLMChallengeRequest): Promise<LLMChallengeResponse> {
   const res = await fetch(`${API_BASE}/llm/challenge`, {
     method: "POST",

@@ -56,6 +56,7 @@ class LLMQueryResponse(BaseModel):
     next_questions: list[str] = []
     evidence_refs: list[str] = []
     confidence: Optional[float] = None
+    uncertainty_notes: list[str] = []
 
 
 class LLMChallengeRequest(BaseModel):
@@ -133,6 +134,22 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=404, detail="compare_run_id not found")
         try:
             result = reasoner.answer(record, request.question, scope=request.scope, compare_record=compare_record)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return LLMQueryResponse(question=request.question, **result)
+
+    @app.post("/llm/causal", response_model=LLMQueryResponse, dependencies=security_dependencies)
+    async def llm_causal(request: LLMQueryRequest) -> LLMQueryResponse:
+        record = run_store.get(request.run_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="run_id not found")
+        compare_record = None
+        if request.compare_run_id:
+            compare_record = run_store.get(request.compare_run_id)
+            if not compare_record:
+                raise HTTPException(status_code=404, detail="compare_run_id not found")
+        try:
+            result = reasoner.causal_answer(record, request.question, scope=request.scope, compare_record=compare_record)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return LLMQueryResponse(question=request.question, **result)
